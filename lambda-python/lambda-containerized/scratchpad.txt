@@ -1,0 +1,18 @@
+
+
+
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 139457818185.dkr.ecr.us-east-1.amazonaws.com
+
+docker build --platform linux/amd64 -t my-lambda-function .
+
+docker tag my-lambda-function:latest 139457818185.dkr.ecr.us-east-1.amazonaws.com/my-lambda-repo:latest
+
+docker push 139457818185.dkr.ecr.us-east-1.amazonaws.com/my-lambda-repo:latest
+
+aws lambda create-function \
+  --function-name my-container-lambda \
+  --package-type Image \
+  --code ImageUri=139457818185.dkr.ecr.us-east-1.amazonaws.com/my-lambda-repo:latest \
+  --role arn:aws:iam::139457818185:role/service-role/LambdaExecRole \
+  --environment Variables="{LUMIGO_TRACER_TOKEN=t_5a4ddb7fde3d4e888646c}"
+
