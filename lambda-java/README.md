@@ -1,89 +1,48 @@
-# LambdaJavaLumigoExamples
+# Lambda Java Examples with Lumigo Integration
 
-This Lambda function fetches weather data from the OpenWeather API, stores the response in an S3 bucket, and integrates with Lumigo for distributed tracing and enhanced logging. Follow these instructions to set up, build, and deploy this Lambda function.
+This project contains two AWS Lambda functions:
+1. **`LambdaJavaLumigoExampleSimple`** - A simple function that logs messages and returns.
+2. **`LambdaJavaLumigoExampleWeather`** - A more complex function that fetches weather data from the OpenWeather API, stores the response in an S3 bucket, and integrates with AWS Secrets Manager.
+
+Both functions are packaged into the same JAR. The user can switch between them by updating the Lambda handler configuration.
 
 ## Prerequisites
 
-- **Java 11 or higher**: Ensure Java is installed and available in your PATH.
-- **Maven**: Used for building and packaging the Java project.
-- **AWS CLI**: Used for deploying the Lambda function and managing AWS resources.
-- **AWS Account**: Required permissions for Secrets Manager, S3, CloudWatch Logs, and Lambda.
+- **Java 11 or higher**
+- **Maven**
+- **AWS CLI**
+- **AWS Account** with necessary permissions
 
-## Getting Started
+## Setup
 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/barrysolomon/LumigoLambdaExamples.git
+git clone https://github.com/your-repo/LambdaJavaLumigoExample.git
 cd LambdaJavaLumigoExample
 ```
 
-### 2. Project Structure
-
-- **src/main/java**: Java source files.
-- **src/main/resources**: Any additional resources.
-- **pom.xml**: Maven configuration and dependencies.
-
-### 3. Configuration for Lumigo Tracing
+### 2. Lumigo Configuration
 
 To enable Lumigo logging and tracing:
-
-1. **AWS Tag**: Add an AWS tag `LUMIGO_LOG_COLLECTION` set to `true` to enable Lumigo’s log collection.
+1. **AWS Tag**: Set an AWS tag `LUMIGO_LOG_COLLECTION` to `true` on the Lambda function.
 2. **Environment Variables**:
-   - `JAVA_TOOL_OPTIONS`: Set to `'-Djdk.attach.allowAttachSelf=true'` to allow Lumigo’s tracer agent to attach.
-   - `LUMIGO_TRACER_TOKEN`: Set this environment variable with the Lumigo tracer token if it’s not automatically set during logging initialization.
+   - `JAVA_TOOL_OPTIONS`: Set to `'-Djdk.attach.allowAttachSelf=true'`.
+   - `LUMIGO_TRACER_TOKEN`: Set to your Lumigo token if it’s not automatically initialized.
 
-### 4. Dependencies
+### 3. Build the Project
 
-Add the necessary dependencies in `pom.xml` for AWS SDK, S3, Secrets Manager, Lumigo, and any other required libraries.
-
-#### Sample Dependency Configuration
-
-Ensure `pom.xml` includes:
-
-```xml
-<dependencies>
-    <!-- AWS SDK for Lambda, S3, and Secrets Manager -->
-    <dependency>
-        <groupId>com.amazonaws</groupId>
-        <artifactId>aws-java-sdk-lambda</artifactId>
-        <version>1.12.506</version>
-    </dependency>
-    <dependency>
-        <groupId>com.amazonaws</groupId>
-        <artifactId>aws-java-sdk-s3</artifactId>
-        <version>1.12.506</version>
-    </dependency>
-    <dependency>
-        <groupId>com.amazonaws</groupId>
-        <artifactId>aws-java-sdk-secretsmanager</artifactId>
-        <version>1.12.506</version>
-    </dependency>
-
-    <!-- Lumigo SDK -->
-    <dependency>
-        <groupId>io.lumigo</groupId>
-        <artifactId>lumigo-agent</artifactId>
-        <version>1.0.0</version>
-    </dependency>
-</dependencies>
+```bash
+mvn clean package
 ```
 
-## Building and Packaging the Lambda Function
+The packaged JAR file will be located in `target/java-lambda-lumigo-1.0-SNAPSHOT.jar`.
 
-1. **Build the Project**:
+## Deploying the Lambda Function
 
-   ```bash
-   mvn clean package
-   ```
+### 1. Initial Deployment Script
 
-2. **Output Jar**: The packaged JAR file is located at `target/java-lambda-lumigo-1.0-SNAPSHOT.jar`.
-
-## Creating and Deploying the Lambda Function
-
-### 1. Create the Lambda Function
-
-Use the following script to create or update the Lambda function.
+Use the following script to create or update the Lambda function and switch between handlers:
 
 ```bash
 #!/bin/bash
@@ -91,12 +50,16 @@ Use the following script to create or update the Lambda function.
 # Set variables
 FUNCTION_NAME="java21lambda"
 JAR_PATH="target/java-lambda-lumigo-1.0-SNAPSHOT.jar"
-HANDLER="LambdaJavaLumigoExampleSimple::handleRequest"  # Replace with your actual handler
 ROLE_ARN="arn:aws:iam::139457818185:role/java21lambda-role-6ntld2sc"  # Replace with your IAM role ARN
 REGION="us-east-1"
 RUNTIME="java11"
 TIMEOUT=30
 MEMORY_SIZE=512
+
+# Choose the handler
+HANDLER="LambdaJavaLumigoExampleSimple::handleRequest"  # Simple logging function
+# Uncomment the following line to use the weather-fetching function
+# HANDLER="LambdaJavaLumigoExampleWeather::handleRequest"
 
 # Check if the Lambda function exists
 aws lambda get-function --function-name $FUNCTION_NAME --region $REGION > /dev/null 2>&1
@@ -129,12 +92,12 @@ else
         --region $REGION
 fi
 
-echo "Deployment complete."
+echo "Deployment complete. Handler is set to $HANDLER."
 ```
 
-### 2. Add Necessary AWS Policies
+### 2. Configure IAM Role and Policies
 
-Ensure the Lambda function has the required permissions to access S3, Secrets Manager, and CloudWatch Logs. Use the following AWS CLI commands:
+Add the following permissions to the Lambda role:
 
 ```bash
 aws iam put-role-policy \
@@ -176,12 +139,7 @@ aws iam put-role-policy \
 
 ### 3. Set Required Tags
 
-Ensure the following tag is set on your Lambda function:
-
-- **Key**: `LUMIGO_LOG_COLLECTION`
-- **Value**: `true`
-
-This tag enables Lumigo’s log collection on your Lambda function. You can set tags with the following command:
+Add the `LUMIGO_LOG_COLLECTION` tag to enable Lumigo logging.
 
 ```bash
 aws lambda tag-resource \
@@ -189,25 +147,40 @@ aws lambda tag-resource \
     --tags LUMIGO_LOG_COLLECTION=true
 ```
 
-### 4. Verify and Test
+### 4. Create Secrets in AWS Secrets Manager
 
-Run a test invocation of the Lambda function:
+1. **Navigate to Secrets Manager in AWS Console**.
+2. **Create a new secret** for `initech-weather-api-key` and store your API key from OpenWeather.
+   - **Secret name**: `initech-weather-api-key`
+   - **Secret value**: `{ "key": "your-weather-api-key" }`
+
+## Switching Between Lambda Handlers
+
+The `LambdaJavaLumigoExampleSimple` and `LambdaJavaLumigoExampleWeather` functions are both packaged into the JAR. To switch between them:
+1. Update the `HANDLER` variable in the deployment script:
+   - **Simple Logging Function**: `LambdaJavaLumigoExampleSimple::handleRequest`
+   - **Weather Fetching Function**: `LambdaJavaLumigoExampleWeather::handleRequest`
+2. Run the deployment script again.
+
+## Verifying the Deployment
+
+Run a test invocation:
 
 ```bash
 aws lambda invoke --function-name $FUNCTION_NAME output.json
 ```
 
-Check `output.json` and CloudWatch logs for expected logs and behavior.
+Check `output.json` and CloudWatch logs to verify that the function logs and/or stores the weather data in S3 as expected.
 
 ## Troubleshooting
 
-1. **Missing Lumigo Tracer**: If you encounter errors related to the Lumigo tracer jar file, verify that the Lumigo layer is attached to the Lambda and that the path `/opt/lumigo-java/lumigo-tracer.jar` exists.
-2. **Environment Variable Issues**: Confirm that `LUMIGO_TRACER_TOKEN` and `JAVA_TOOL_OPTIONS` are correctly set in the Lambda’s environment variables.
-3. **Permission Errors**: Double-check that the Lambda role has the necessary permissions as per the attached IAM policy.
+- **Missing Lumigo Tracer**: Ensure `lumigo-tracer.jar` is included in the Lambda layer or accessible at `/opt/lumigo-java/lumigo-tracer.jar`.
+- **Environment Variable Issues**: Double-check that `LUMIGO_TRACER_TOKEN` and `JAVA_TOOL_OPTIONS` are correctly set in the Lambda’s environment variables.
+- **Secrets Configuration**: Confirm that `initech-weather-api-key` exists in Secrets Manager with the correct permissions and value.
 
 ## Additional Notes
 
-- **Logging Configuration**: Lumigo’s tracer provides enhanced logs and distributed tracing. Ensure your function’s logs and traces appear as expected in Lumigo’s dashboard.
-- **Memory and Timeout Settings**: Adjust memory and timeout values based on the expected workload and response time from external services like OpenWeather.
+- **Memory and Timeout**: Adjust Lambda memory and timeout settings as needed for API response times.
+- **Logging and Monitoring**: Check Lumigo's dashboard for enhanced logs and tracing insights.
 
 ---
