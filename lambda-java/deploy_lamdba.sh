@@ -3,15 +3,18 @@
 # Set variables
 FUNCTION_NAME="java21lambda"
 JAR_PATH="target/java-lambda-lumigo-1.0-SNAPSHOT.jar"
-HANDLER="LambdaJavaLumigoExample::handleRequest"  # Replace with your actual handler
-ROLE_ARN="arn:aws:iam::139457818185:role/java21lambda-role-6ntld2sc"  # Replace with your IAM role ARN
+HANDLER="LambdaJavaLumigoExampleSimple::handleRequest"                     # Replace with your actual handler
+ROLE_ARN="arn:aws:iam::139457818185:role/java21lambda-role-6ntld2sc" # Replace with your IAM role ARN
 REGION="us-east-1"
-RUNTIME="java21"  # Use the appropriate runtime, e.g., java11, java8.al2
+RUNTIME="java11" # Updated to java11 as java21 is not a supported runtime
 TIMEOUT=30
 MEMORY_SIZE=512
 
+# Policy names
+POLICY_NAME="SecretsManagerAndS3AccessPolicy"
+
 # Check if the Lambda function exists
-aws lambda get-function --function-name $FUNCTION_NAME --region $REGION > /dev/null 2>&1
+aws lambda get-function --function-name $FUNCTION_NAME --region $REGION >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
     echo "Creating Lambda function: $FUNCTION_NAME"
@@ -31,12 +34,18 @@ else
         --zip-file fileb://$JAR_PATH \
         --region $REGION
 
+    sleep 2
+    echo "Updating Lambda function Configuration: $FUNCTION_NAME"
+
     aws lambda update-function-configuration \
         --function-name $FUNCTION_NAME \
         --handler $HANDLER \
         --timeout $TIMEOUT \
         --memory-size $MEMORY_SIZE \
         --region $REGION
+
+    sleep 2
+
 fi
 
 echo "Deployment complete."
