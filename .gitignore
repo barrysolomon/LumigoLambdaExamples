@@ -1,1 +1,6 @@
 lambda-java/target/*
+lambda-java/output.json
+node_modules/*
+lambda-node-simple/*/node_modules/*
+lambda-node-simple/*/package-lock.json
+lambda-node-simple/package-lock.json

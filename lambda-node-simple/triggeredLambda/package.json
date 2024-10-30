@@ -1,0 +1,16 @@
+{
+  "name": "triggeredlambda",
+  "version": "1.0.0",
+  "description": "",
+  "main": "triggeredLambda.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@lumigo/tracer": "^1.102.1",
+    "aws-sdk": "^2.1691.0"
+  }
+}
