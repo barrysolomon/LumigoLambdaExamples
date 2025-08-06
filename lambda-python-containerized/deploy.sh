@@ -21,6 +21,129 @@ ECR_REPO_NAME="lambda-python-lumigo"
 echo -e "${BLUE}🚀 Turnkey Lambda Deployment with Lumigo${NC}"
 echo "================================================"
 
+# Function to check if Lambda function exists
+check_lambda_exists() {
+    if aws lambda get-function --function-name $FUNCTION_NAME > /dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to run existing Lambda function
+run_existing_lambda() {
+    echo -e "${BLUE}🧪 Running existing Lambda function...${NC}"
+    test_function_interactive
+    
+    echo ""
+    echo -e "${GREEN}🎉 Testing completed successfully!${NC}"
+    echo ""
+    echo -e "${BLUE}📋 Summary:${NC}"
+    echo "Function Name: $FUNCTION_NAME"
+    echo "Region: $AWS_REGION"
+    echo ""
+    echo -e "${BLUE}🔗 Next steps:${NC}"
+    echo "1. View function in AWS Lambda console"
+    echo "2. Check CloudWatch logs for execution details"
+    echo "3. Monitor traces in Lumigo dashboard"
+}
+
+# Function to build and deploy Lambda function
+build_and_deploy_lambda() {
+    echo -e "${BLUE}🔨 Building and deploying Lambda function...${NC}"
+    
+    # Check prerequisites
+    check_prerequisites
+    
+    # Get AWS account ID
+    get_aws_account_id
+    
+    # Setup Lumigo token
+    setup_lumigo_token
+    
+    # Setup IAM role
+    setup_iam_role
+    
+    # Build and push Docker image
+    build_and_push
+    
+    # Deploy Lambda function
+    deploy_lambda
+    
+    # Test the function
+    test_function_interactive
+    
+    echo ""
+    echo -e "${GREEN}🎉 Deployment completed successfully!${NC}"
+    echo ""
+    echo -e "${BLUE}📋 Summary:${NC}"
+    echo "Function Name: $FUNCTION_NAME"
+    echo "Region: $AWS_REGION"
+    echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest"
+    echo ""
+    echo -e "${BLUE}🔗 Next steps:${NC}"
+    echo "1. View function in AWS Lambda console"
+    if [ ! -z "$LUMIGO_TOKEN" ]; then
+        echo "2. Monitor traces in Lumigo dashboard"
+    else
+        echo "2. Set LUMIGO_TRACER_TOKEN in Lambda environment variables to enable tracing"
+    fi
+    echo "3. Check CloudWatch logs for execution details"
+}
+
+# Initial prompt for user choice
+initial_prompt() {
+    while true; do
+        if check_lambda_exists; then
+            echo -e "${GREEN}✅ Lambda function '$FUNCTION_NAME' exists${NC}"
+            echo ""
+            echo "What would you like to do?"
+            echo "1. 🧪 Run existing Lambda function (test without rebuilding)"
+            echo "2. 🔨 Build and deploy Lambda function (rebuild and redeploy)"
+            echo "3. ❌ Exit"
+            echo ""
+            read -p "Choose an option (1-3): " -n 1 -r
+            echo
+            echo ""
+            
+            if [[ $REPLY =~ ^[1]$ ]]; then
+                run_existing_lambda
+                echo ""
+                echo -e "${BLUE}🔄 Returning to main menu...${NC}"
+                echo ""
+            elif [[ $REPLY =~ ^[2]$ ]]; then
+                build_and_deploy_lambda
+                echo ""
+                echo -e "${BLUE}🔄 Returning to main menu...${NC}"
+                echo ""
+            else
+                echo "Exiting. Goodbye!"
+                exit 0
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Lambda function '$FUNCTION_NAME' does not exist${NC}"
+            echo ""
+            echo "What would you like to do?"
+            echo "1. 🔨 Build and deploy Lambda function (create new function)"
+            echo "2. ❌ Exit"
+            echo ""
+            read -p "Choose an option (1-2): " -n 1 -r
+            echo
+            echo ""
+            
+            if [[ $REPLY =~ ^[1]$ ]]; then
+                build_and_deploy_lambda
+                echo ""
+                echo -e "${BLUE}🔄 Returning to main menu...${NC}"
+                echo ""
+            else
+                echo "Exiting. Goodbye!"
+                exit 0
+            fi
+        fi
+    done
+}
+
 # Function to check prerequisites
 check_prerequisites() {
     echo -e "${BLUE}🔍 Checking prerequisites...${NC}"
@@ -435,62 +558,8 @@ test_function_interactive() {
 
 # Main execution
 main() {
-    check_prerequisites
-    get_aws_account_id
-    setup_lumigo_token
-    setup_iam_role
-    build_and_push
-    deploy_lambda
-    test_function
-    
-    echo ""
-    echo -e "${GREEN}🎉 Deployment completed successfully!${NC}"
-    echo ""
-    echo -e "${BLUE}📋 Summary:${NC}"
-    echo "Function Name: $FUNCTION_NAME"
-    echo "Region: $AWS_REGION"
-    echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest"
-    echo ""
-    echo -e "${BLUE}🔗 Next steps:${NC}"
-    echo "1. View function in AWS Lambda console"
-    if [ ! -z "$LUMIGO_TOKEN" ]; then
-        echo "2. Monitor traces in Lumigo dashboard"
-    else
-        echo "2. Set LUMIGO_TRACER_TOKEN in Lambda environment variables to enable tracing"
-    fi
-    echo "3. Check CloudWatch logs for execution details"
-    echo ""
-    
-    # Prompt to call the function
-    echo -e "${YELLOW}🧪 Would you like to test the Lambda function now?${NC}"
-    read -p "Call the Lambda function? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "${BLUE}🚀 Invoking Lambda function...${NC}"
-        aws lambda invoke \
-            --function-name $FUNCTION_NAME \
-            --payload '{"data": "hello from turnkey deployment", "test": true, "source": "deploy-script"}' \
-            --cli-binary-format raw-in-base64-out \
-            response.json
-        
-        echo -e "${GREEN}✅ Function invoked successfully!${NC}"
-        
-        if [ -f "response.json" ]; then
-            echo -e "${BLUE}📄 Function response:${NC}"
-            cat response.json | jq '.' 2>/dev/null || cat response.json
-        fi
-        
-        echo ""
-        echo -e "${BLUE}📊 To see the full execution details:${NC}"
-        echo "1. Check CloudWatch logs: aws logs describe-log-groups --log-group-name-prefix /aws/lambda/$FUNCTION_NAME"
-        echo "2. View recent logs: aws logs tail /aws/lambda/$FUNCTION_NAME --follow"
-        if [ ! -z "$LUMIGO_TOKEN" ]; then
-            echo "3. Monitor traces in Lumigo dashboard"
-        fi
-    else
-        echo -e "${BLUE}ℹ️  You can test the function later with:${NC}"
-        echo "aws lambda invoke --function-name $FUNCTION_NAME --payload '{\"test\": true}' response.json"
-    fi
+    # Start with initial prompt
+    initial_prompt
 }
 
 # Run main function
