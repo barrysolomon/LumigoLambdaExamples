@@ -4,3 +4,4 @@ node_modules/*
 lambda-node-simple/*/node_modules/*
 lambda-node-simple/*/package-lock.json
 lambda-node-simple/package-lock.json
+lambda-python-containerized/response.json

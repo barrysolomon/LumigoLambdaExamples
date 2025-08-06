@@ -1,313 +1,303 @@
-# Containerized Python Lambda with Lumigo OpenTelemetry Instrumentation
+# Containerized Python Lambda with Lumigo OpenTelemetry
 
-This example demonstrates a containerized AWS Lambda function using Python 3.11 with Lumigo OpenTelemetry instrumentation for distributed tracing.
+A production-ready example of a containerized Python Lambda function instrumented with Lumigo OpenTelemetry Distribution. This Lambda demonstrates comprehensive AWS service interactions including S3 bucket lifecycle management, DynamoDB CRUD operations (with data preservation), HTTP requests, and structured logging with execution tags.
 
-## Overview
+## 🚀 Features
 
-The Lambda function includes:
-- Lumigo OpenTelemetry instrumentation using the `@lumigo_wrapped` decorator
-- HTTP requests to external APIs (traced)
-- AWS SDK operations (S3, DynamoDB - traced)
-- **Complete DynamoDB CRUD operations** with detailed logging and execution tags
-- Custom business logic
-- **Execution Tags** for better trace filtering and identification
-- **Programmatic Errors** for custom error categorization
-- Error handling and logging
+- **Containerized Lambda**: Uses AWS Lambda Container Images for consistent deployment
+- **Lumigo Instrumentation**: Full OpenTelemetry tracing with execution tags and programmatic errors
+- **S3 Lifecycle Management**: Create buckets, upload objects, list contents, and cleanup
+- **DynamoDB CRUD Operations**: Create, Read, Update operations (DELETE skipped for data preservation)
+- **HTTP API Integration**: External API calls with error handling
+- **Structured Logging**: JSON-formatted logs with execution context using Python logger
+- **Turnkey Deployment**: Automated deployment script with interactive testing
+- **Data Preservation**: DynamoDB items are preserved (not deleted) for demonstration purposes
 
-## Prerequisites
+## 📋 Prerequisites
 
-- Docker installed and running
-- AWS CLI configured with valid credentials
-- Lumigo account and tracer token (optional for initial deployment)
+- **AWS CLI** installed and configured
+- **Docker** installed and running
+- **AWS SSO** or IAM credentials with appropriate permissions
+- **Lumigo Account** with tracer token
 
-## Quick Start (Turnkey Deployment)
+### Required AWS Permissions
 
-For the fastest setup, use the turnkey deployment script:
+The deployment script will create an IAM role with these policies:
+- `AWSLambdaBasicExecutionRole` - CloudWatch Logs
+- `AmazonS3FullAccess` - S3 bucket and object operations
+- `AmazonDynamoDBFullAccess` - DynamoDB table operations
+
+## 🛠️ Quick Start
+
+### 1. Clone and Setup
 
 ```bash
-# Deploy with Lumigo token
-./deploy.sh YOUR_LUMIGO_TOKEN
+git clone <your-repo-url>
+cd lambda-python-containerized
+```
 
-# Deploy without token (configure later)
+### 2. Deploy with Interactive Script
+
+```bash
 ./deploy.sh
 ```
 
 The script will:
-- ✅ Check all prerequisites (Docker, AWS CLI, credentials)
-- ✅ Create necessary IAM roles automatically
-- ✅ Build and push the Docker image
-- ✅ Deploy the Lambda function
-- ✅ Test the function automatically
+- ✅ Check prerequisites (Docker, AWS CLI, credentials)
+- 🔧 Create IAM role with necessary permissions
+- 📦 Build and push Docker image to ECR
+- 🚀 Deploy Lambda function with environment variables
+- 🧪 Offer interactive testing options
 
-**That's it!** Your Lambda function will be running with Lumigo instrumentation.
+### 3. Test Your Function
 
-## Manual Setup Instructions
-
-### 1. Environment Configuration
-
-Environment variables are set with sensible defaults in the Dockerfile. You can override them:
+The deployment script offers multiple testing options:
 
 ```bash
-# Required: Your Lumigo tracer token
-export LUMIGO_TRACER_TOKEN="your-lumigo-token-here"
-
-# Optional: Service name for your application
-export OTEL_SERVICE_NAME="example-lambda-python"
-
-# Optional: Enable logs (default is false)
-export LUMIGO_ENABLE_LOGS="true"
+# Option 1: Use default test event
+# Option 2: Simple test event
+# Option 3: Custom JSON event
+# Option 4: Skip testing
 ```
 
-### 2. Advanced Deployment
+## 📁 Project Structure
 
-For more control, use the advanced deployment script:
-
-```bash
-# Basic deployment
-./build-and-deploy.sh <your-account-id> <your-region> <ecr-repo-name>
-
-# With custom Lambda function name
-./build-and-deploy.sh <your-account-id> <your-region> <ecr-repo-name> my-custom-function-name
+```
+lambda-python-containerized/
+├── lambda_function.py      # Main Lambda handler with Lumigo instrumentation
+├── Dockerfile             # Container image definition
+├── requirements.txt       # Python dependencies
+├── deploy.sh             # Turnkey deployment script
+├── test-event.json       # Sample test event
+├── README.md             # This file
+└── .gitignore           # Git ignore patterns
 ```
 
-**Example:**
-```bash
-./build-and-deploy.sh 123456789012 us-east-1 lambda-python-lumigo my-lumigo-function
-```
-
-#### What the advanced deployment script does:
-
-1. **🔍 Pre-flight Checks:**
-   - Verifies Docker is running
-   - Validates AWS credentials and account ID
-   - Checks for required tools (docker, aws, jq)
-
-2. **🔧 IAM Role Setup:**
-   - Creates `lambda-execution-role` if it doesn't exist
-   - Attaches necessary policies:
-     - `AWSLambdaBasicExecutionRole` (CloudWatch logs)
-     - `AmazonS3ReadOnlyAccess` (S3 operations)
-     - `AmazonDynamoDBFullAccess` (DynamoDB CRUD operations)
-
-3. **🔍 Environment Variable Validation:**
-   - Checks for `LUMIGO_TRACER_TOKEN` (prompts if missing)
-   - Validates optional variables (`OTEL_SERVICE_NAME`, `LUMIGO_ENABLE_LOGS`)
-   - Sets defaults for missing variables
-
-4. **📦 Build & Deploy:**
-   - Builds Docker image
-   - Pushes to ECR
-   - Creates or updates Lambda function
-   - Sets environment variables automatically
-
-5. **🧪 Testing:**
-   - Invokes the function with `test-event.json`
-   - Displays the response
-
-#### Environment Variables
-
-The script will prompt for or use these environment variables:
-
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `LUMIGO_TRACER_TOKEN` | Your Lumigo tracer token | Yes | Prompted |
-| `OTEL_SERVICE_NAME` | Service name | No | `example-lambda-python` |
-| `LUMIGO_ENABLE_LOGS` | Enable log instrumentation | No | `true` |
-| `DYNAMODB_TABLE_NAME` | DynamoDB table name | No | `example-table` |
-| `S3_BUCKET_NAME` | S3 bucket name | No | `example-bucket` |
-
-### 3. Manual Deployment (Alternative)
-
-If you prefer manual deployment:
-
-```bash
-# Build the image
-docker build -t lambda-python-lumigo .
-
-# Tag for ECR
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <your-account-id>.dkr.ecr.us-east-1.amazonaws.com
-docker tag lambda-python-lumigo:latest <your-account-id>.dkr.ecr.us-east-1.amazonaws.com/lambda-python-lumigo:latest
-
-# Push to ECR
-docker push <your-account-id>.dkr.ecr.us-east-1.amazonaws.com/lambda-python-lumigo:latest
-```
-
-### 4. Test the Function
-
-The deployment script automatically tests the function, or you can test manually:
-
-```bash
-aws lambda invoke \
-  --function-name <your-function-name> \
-  --payload file://test-event.json \
-  --cli-binary-format raw-in-base64-out \
-  response.json
-```
-
-## Lumigo Instrumentation Features
-
-### Automatic Instrumentation
-
-The `@lumigo_wrapped` decorator automatically instruments:
-- HTTP requests (requests library)
-- AWS SDK operations (boto3)
-- Lambda function execution
-- Custom spans for business logic
+## 🔧 Configuration
 
 ### Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `LUMIGO_TRACER_TOKEN` | Your Lumigo tracer token | Yes |
-| `OTEL_SERVICE_NAME` | Service name for your application | No |
-| `LUMIGO_ENABLE_LOGS` | Enable log instrumentation | No |
-| `LUMIGO_AUTO_TAG` | Auto-extract tags from event (e.g., "user_id,source") | No |
+The Lambda function uses these environment variables:
 
-### Advanced Configuration
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LUMIGO_TRACER_TOKEN` | Your Lumigo tracer token | Required |
+| `OTEL_SERVICE_NAME` | Service name for tracing | `lambda-python-lumigo-example` |
+| `LUMIGO_ENABLE_LOGS` | Enable Lumigo log collection | `true` |
+| `S3_BUCKET_NAME` | S3 bucket for lifecycle operations | `example-bucket` |
+| `DYNAMODB_TABLE_NAME` | DynamoDB table for CRUD operations | `example-table` |
 
-Additional environment variables you can set:
+### Lumigo Configuration
 
-```bash
-# Filter HTTP endpoints (optional)
-LUMIGO_FILTER_HTTP_ENDPOINTS_REGEX='["health", "metrics"]'
+The function is instrumented with Lumigo OpenTelemetry Distribution:
 
-# Secret masking (optional)
-LUMIGO_SECRET_MASKING_REGEX='password|secret|key'
+```python
+from lumigo_opentelemetry import lumigo_wrapped
 
-# Disable dependency reporting (optional)
-LUMIGO_REPORT_DEPENDENCIES=false
-
-# Auto-extract tags from event (optional)
-LUMIGO_AUTO_TAG='user_id,source,request_type'
+@lumigo_wrapped
+def lambda_handler(event, context):
+    # Your Lambda code here
 ```
 
-## Execution Tags
+## 🎯 Function Capabilities
 
-The Lambda function demonstrates how to add execution tags for better trace filtering:
+### 1. S3 Bucket Lifecycle Management
+- **Round-robin** through 3 buckets: `example-bucket`, `example-bucket-2`, `example-bucket-3`
+- **Create bucket** if it doesn't exist
+- **Upload sample objects** with metadata
+- **List bucket contents** with detailed logging
+- **Delete objects** for cleanup (buckets remain)
 
-### Manual Execution Tags
-- **API Call Status**: `api_call_status`, `post_id`
-- **S3 Operations**: `s3_bucket_count`, `s3_operation`, `s3_operation_status`
-- **DynamoDB CRUD Operations**: 
-  - `dynamodb_table` - Table name being accessed
-  - `dynamodb_operations` - Types of operations performed (create,read,update,delete)
-  - `dynamodb_status` - Overall operation status
-  - `dynamodb_item_id` - Item ID being operated on (truncated to 20 chars)
-  - `dynamodb_operations_count` - Number of operations completed
-  - `dynamodb_create`, `dynamodb_read`, `dynamodb_update`, `dynamodb_delete` - Individual operation status
-  - `dynamodb_item_found`, `dynamodb_updated_attrs`, `dynamodb_deleted` - Operation-specific results
-- **Business Logic**: `business_logic_result`, `processing_status`
-- **Event Data**: `has_data`, `data_length`, `is_test`, `event_source`, `event_timestamp`
-- **Error Information**: `error_category`, `error_type`
+### 2. DynamoDB CRUD Operations
+- **Round-robin** through 3 tables: `example-table`, `example-table-2`, `example-table-3`
+- **Create table** if it doesn't exist
+- **CREATE**: Insert new items with UUID
+- **READ**: Retrieve items by ID
+- **UPDATE**: Modify item attributes
+- **DELETE**: **SKIPPED** for data preservation (items remain in table)
 
-### Auto Execution Tags
-You can configure automatic tag extraction from the Lambda event by setting:
-```bash
-LUMIGO_AUTO_TAG='user_id,source,request_type'
-```
+### 3. HTTP API Integration
+- **Round-robin** through 3 endpoints:
+  - `https://jsonplaceholder.typicode.com/posts/1`
+  - `https://jsonplaceholder.typicode.com/posts/2`
+  - `https://jsonplaceholder.typicode.com/posts/3`
+- **Error handling** with programmatic errors
+- **Response logging** with timing information
 
-This will automatically extract these fields from the event and create execution tags.
+### 4. Structured Logging
+- **Python logger** instead of print statements
+- **JSON-formatted logs** with Data_Source, Data_Target, Data_Artifacts
+- **Safe serialization** for datetime objects and complex data structures
+- **Execution tags** for resource identification
+- **Programmatic errors** for error categorization
 
-## DynamoDB CRUD Operations
+## 📊 Monitoring and Observability
 
-The function performs a complete CRUD (Create, Read, Update, Delete) round trip on DynamoDB:
+### Lumigo Dashboard
+- **Traces**: View complete request flows
+- **Execution Tags**: Filter by table names, bucket names, API endpoints
+- **Errors**: Programmatic error categorization
+- **Performance**: Response times and operation metrics
 
-### Operations Performed
-1. **CREATE**: Inserts a new item with unique ID and metadata
-2. **READ**: Retrieves the created item to verify it exists
-3. **UPDATE**: Updates the item's status and adds an updated_at timestamp
-4. **DELETE**: Removes the item from the table
-
-### JSON Logging
-Each operation is logged as structured JSON with:
-- Operation type and status
-- Item ID and response metadata
-- Consumed capacity information
-- Request IDs for tracing
+### CloudWatch Logs
+- **Structured JSON logs** for easy parsing
+- **Operation details** with metadata
+- **Error tracking** with stack traces
 
 ### Execution Tags
-The CRUD operations add comprehensive execution tags:
-- `dynamodb_table` - Table name being accessed
-- `dynamodb_operations` - Types of operations performed
-- `dynamodb_status` - Overall operation status
-- `dynamodb_item_id` - Item ID (truncated to stay under 75 chars)
-- `dynamodb_operations_count` - Number of operations completed
-- Individual operation tags: `dynamodb_create`, `dynamodb_read`, `dynamodb_update`, `dynamodb_delete`
-- Result tags: `dynamodb_item_found`, `dynamodb_updated_attrs`, `dynamodb_deleted`
+The function automatically adds these execution tags:
+- `api_endpoint` - HTTP endpoint used
+- `s3_bucket` - S3 bucket name
+- `dynamodb_table` - DynamoDB table name
+- `user_id` - From event payload (if present)
+- `source` - From event payload (if present)
 
-### Error Handling
-If any CRUD operation fails:
-- Error details are logged as JSON
-- Execution tags indicate which operations completed
-- Error type and message are captured
-- The error is re-raised to trigger programmatic error handling
+## 🧪 Testing
 
-## Programmatic Errors
+### Supported Event Payloads
 
-The function includes custom error handling with programmatic errors:
+#### Basic Event (Default)
+```json
+{
+  "data": "hello world from lumigo",
+  "test": true,
+  "timestamp": "2024-01-01T00:00:00Z",
+  "source": "test",
+  "user_id": "user123",
+  "request_type": "api_call"
+}
+```
 
-### Error Types
-- **HTTP_REQUEST_FAILED**: For HTTP request failures
-- **LAMBDA_EXECUTION_FAILED**: For general Lambda execution failures
+#### Minimal Event
+```json
+{
+  "test": true
+}
+```
 
-### Error Attributes
-Each programmatic error includes:
-- Error message and type
-- Additional context (URL, error codes, function name, request ID)
-- Execution tags for error categorization
+#### Empty Event
+```json
+{}
+```
 
-## Monitoring in Lumigo
+#### Custom Data Processing
+```json
+{
+  "data": "custom message to process",
+  "user_id": "user456",
+  "source": "api_gateway"
+}
+```
 
-Once deployed, you can monitor your Lambda function in Lumigo:
+### Testing Commands
 
-1. **Traces**: View distributed traces showing the complete request flow
-2. **Transactions**: See the transaction graph with all spans
-3. **Logs**: View enriched logs with trace context
-4. **Metrics**: Monitor performance and error rates
+```bash
+# Test with default event
+aws lambda invoke --function-name lambda-python-lumigo-example --payload '{"data": "test message"}' response.json
 
-## Troubleshooting
+# Test with empty event
+aws lambda invoke --function-name lambda-python-lumigo-example --payload '{}' response.json
+
+# Test with custom event
+aws lambda invoke --function-name lambda-python-lumigo-example --payload '{"user_id": "user789", "source": "manual_test"}' response.json
+```
+
+## 🔍 Troubleshooting
 
 ### Common Issues
 
-1. **No traces appearing**: Ensure `LUMIGO_TRACER_TOKEN` is set correctly
-2. **Permission errors**: Check IAM roles and permissions
-3. **Container build failures**: Verify Dockerfile and requirements.txt
+1. **S3 Permission Errors (403)**
+   - Ensure IAM role has `AmazonS3FullAccess` policy
+   - Check bucket names don't conflict with existing buckets
 
-### Debug Mode
+2. **DynamoDB Permission Errors**
+   - Ensure IAM role has `AmazonDynamoDBFullAccess` policy
+   - Check table names don't conflict with existing tables
 
-For debugging, you can enable span dumping:
+3. **Lumigo Token Issues**
+   - Verify `LUMIGO_TRACER_TOKEN` environment variable is set
+   - Check token validity in Lumigo dashboard
+
+4. **Docker Build Issues**
+   - Ensure Docker is running
+   - Check available disk space
+   - Verify internet connection for pulling base images
+
+### Debug Commands
 
 ```bash
-LUMIGO_DEBUG_SPANDUMP=true
+# View recent CloudWatch logs
+aws logs tail /aws/lambda/lambda-python-lumigo-example --follow
+
+# Check function configuration
+aws lambda get-function --function-name lambda-python-lumigo-example
+
+# View function environment variables
+aws lambda get-function-configuration --function-name lambda-python-lumigo-example
 ```
 
-**Note**: Do not use this in production.
+## 🚀 Performance
 
-## File Structure
+### Optimizations
+- **Container image** optimized for Lambda cold starts
+- **Structured logging** reduces parsing overhead
+- **Safe JSON serialization** prevents serialization errors
+- **Round-robin distribution** spreads load across resources
 
+### Resource Usage
+- **Memory**: 512 MB (configurable)
+- **Timeout**: 30 seconds (configurable)
+- **Architecture**: x86_64 for Mac compatibility
+
+## 🔒 Security
+
+### Best Practices
+- **Environment variables** for sensitive configuration
+- **IAM roles** with minimal required permissions
+- **Container images** from trusted sources
+- **Structured logging** without sensitive data exposure
+
+### Data Handling
+- **DynamoDB items** are preserved (not deleted)
+- **S3 objects** are cleaned up after operations
+- **No sensitive data** logged in structured logs
+
+## 🏭 Production Deployment
+
+### Pre-deployment Checklist
+- [ ] Update `LUMIGO_TRACER_TOKEN` with production token
+- [ ] Review IAM permissions for production environment
+- [ ] Test with production-like event payloads
+- [ ] Verify CloudWatch log retention settings
+- [ ] Set up monitoring alerts
+
+### Environment-Specific Configuration
+```bash
+# Production deployment
+export LUMIGO_TRACER_TOKEN="your_production_token"
+export OTEL_SERVICE_NAME="production-lambda-python-lumigo"
+./deploy.sh
 ```
-.
-├── Dockerfile              # Container definition with default env vars
-├── lambda_function.py      # Lambda function with Lumigo instrumentation
-├── requirements.txt        # Python dependencies
-├── deploy.sh              # Turnkey deployment script
-├── build-and-deploy.sh    # Advanced deployment script
-├── test-event.json        # Sample test event
-└── README.md              # This file
-```
 
-## Dependencies
+## 🤝 Contributing
 
-- `lumigo_opentelemetry`: Lumigo's OpenTelemetry distribution
-- `requests`: HTTP client library
-- `boto3`: AWS SDK for Python
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
-## Supported Python Versions
+## 📄 License
 
-This example uses Python 3.11, which is fully supported by the Lumigo OpenTelemetry Distribution.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Additional Resources
+## 🆘 Support
 
-- [Lumigo OpenTelemetry Distribution Documentation](https://docs.lumigo.io/docs/lumigo-opentelemetry-distribution-for-python)
-- [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/python-image.html)
-- [Lumigo Dashboard](https://platform.lumigo.io) 
+For issues and questions:
+- **Lumigo Documentation**: [https://docs.lumigo.io](https://docs.lumigo.io)
+- **AWS Lambda Documentation**: [https://docs.aws.amazon.com/lambda/](https://docs.aws.amazon.com/lambda/)
+- **OpenTelemetry Documentation**: [https://opentelemetry.io/docs/](https://opentelemetry.io/docs/)
+
+---
+
+**Note**: This Lambda function is designed for demonstration and learning purposes. For production use, ensure proper security, monitoring, and error handling are implemented according to your organization's standards. 
