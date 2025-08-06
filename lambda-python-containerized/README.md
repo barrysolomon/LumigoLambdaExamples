@@ -79,13 +79,13 @@ lambda-python-containerized/
 
 The Lambda function uses these environment variables:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LUMIGO_TRACER_TOKEN` | Your Lumigo tracer token | Required |
-| `OTEL_SERVICE_NAME` | Service name for tracing | `lambda-python-lumigo-example` |
-| `LUMIGO_ENABLE_LOGS` | Enable Lumigo log collection | `true` |
-| `S3_BUCKET_NAME` | S3 bucket for lifecycle operations | `example-bucket` |
-| `DYNAMODB_TABLE_NAME` | DynamoDB table for CRUD operations | `example-table` |
+| Environment Variable | Description | Default Value |
+|---------------------|-------------|---------------|
+| `OTEL_SERVICE_NAME` | Service name for tracing | `lambda-python-lumigo-container` |
+| `LUMIGO_TRACER_TOKEN` | Your Lumigo tracer token | `t_f8f7b905da964eef89261` |
+| `LUMIGO_ENABLE_LOGS` | Enable Lumigo logging | `true` |
+| `DYNAMODB_TABLE_NAME` | DynamoDB table name | `example-table` |
+| `S3_BUCKET_NAME` | S3 bucket name | `example-bucket` |
 
 ### Lumigo Configuration
 
@@ -189,51 +189,33 @@ The function automatically adds these execution tags:
 }
 ```
 
-### Testing Commands
+### Manual Testing
+
+You can also test the function manually using AWS CLI:
 
 ```bash
 # Test with default event
-aws lambda invoke --function-name lambda-python-lumigo-example --payload '{"data": "test message"}' response.json
+aws lambda invoke --function-name lambda-python-lumigo-container --payload '{"data": "test message"}' response.json
 
 # Test with empty event
-aws lambda invoke --function-name lambda-python-lumigo-example --payload '{}' response.json
+aws lambda invoke --function-name lambda-python-lumigo-container --payload '{}' response.json
 
 # Test with custom event
-aws lambda invoke --function-name lambda-python-lumigo-example --payload '{"user_id": "user789", "source": "manual_test"}' response.json
+aws lambda invoke --function-name lambda-python-lumigo-container --payload '{"user_id": "user789", "source": "manual_test"}' response.json
 ```
 
-## 🔍 Troubleshooting
+### Troubleshooting
 
-### Common Issues
-
-1. **S3 Permission Errors (403)**
-   - Ensure IAM role has `AmazonS3FullAccess` policy
-   - Check bucket names don't conflict with existing buckets
-
-2. **DynamoDB Permission Errors**
-   - Ensure IAM role has `AmazonDynamoDBFullAccess` policy
-   - Check table names don't conflict with existing tables
-
-3. **Lumigo Token Issues**
-   - Verify `LUMIGO_TRACER_TOKEN` environment variable is set
-   - Check token validity in Lumigo dashboard
-
-4. **Docker Build Issues**
-   - Ensure Docker is running
-   - Check available disk space
-   - Verify internet connection for pulling base images
-
-### Debug Commands
-
+#### View Logs
 ```bash
-# View recent CloudWatch logs
-aws logs tail /aws/lambda/lambda-python-lumigo-example --follow
+# View CloudWatch logs
+aws logs tail /aws/lambda/lambda-python-lumigo-container --follow
 
-# Check function configuration
-aws lambda get-function --function-name lambda-python-lumigo-example
+# Get function details
+aws lambda get-function --function-name lambda-python-lumigo-container
 
-# View function environment variables
-aws lambda get-function-configuration --function-name lambda-python-lumigo-example
+# Get function configuration
+aws lambda get-function-configuration --function-name lambda-python-lumigo-container
 ```
 
 ## 🚀 Performance

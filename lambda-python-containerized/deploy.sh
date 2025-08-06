@@ -12,11 +12,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default values
-LUMIGO_TOKEN=${1:-""}
-AWS_REGION=${AWS_DEFAULT_REGION:-"us-east-1"}
-FUNCTION_NAME="lambda-python-lumigo-example"
-ECR_REPO_NAME="lambda-python-lumigo"
+# Configuration
+FUNCTION_NAME="lambda-python-lumigo-container"
+REGION="us-east-1"
+ECR_REPOSITORY="lambda-python-lumigo"
+IMAGE_TAG="latest"
+ROLE_NAME="lambda-execution-role"
+
+# Get AWS account ID
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 echo -e "${BLUE}🚀 Turnkey Lambda Deployment with Lumigo${NC}"
 echo "================================================"
@@ -40,7 +44,7 @@ run_existing_lambda() {
     echo ""
     echo -e "${BLUE}📋 Summary:${NC}"
     echo "Function Name: $FUNCTION_NAME"
-    echo "Region: $AWS_REGION"
+    echo "Region: $REGION"
     echo ""
     echo -e "${BLUE}🔗 Next steps:${NC}"
     echo "1. View function in AWS Lambda console"
@@ -78,8 +82,8 @@ build_and_deploy_lambda() {
     echo ""
     echo -e "${BLUE}📋 Summary:${NC}"
     echo "Function Name: $FUNCTION_NAME"
-    echo "Region: $AWS_REGION"
-    echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest"
+    echo "Region: $REGION"
+    echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest"
     echo ""
     echo -e "${BLUE}🔗 Next steps:${NC}"
     echo "1. View function in AWS Lambda console"
@@ -296,27 +300,38 @@ EOF
 # Function to build and push Docker image
 build_and_push() {
     echo -e "${BLUE}📦 Building Docker image...${NC}"
-    docker build --platform linux/amd64 -t $ECR_REPO_NAME .
+    
+    # Create a clean virtual environment for building
+    echo -e "${BLUE}🧹 Creating clean build environment...${NC}"
+    python3 -m venv .venv-build
+    source .venv-build/bin/activate
+    
+    # Build Docker image
+    docker build --platform linux/amd64 -t $ECR_REPOSITORY .
+    
+    # Deactivate virtual environment
+    deactivate
+    rm -rf .venv-build
     
     echo -e "${BLUE}🔐 Logging into ECR...${NC}"
     check_aws_credentials || return 1
-    aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+    aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
     
     # Create ECR repository if it doesn't exist
     echo -e "${BLUE}🏗️  Checking ECR repository...${NC}"
-    if ! aws ecr describe-repositories --repository-names $ECR_REPO_NAME --region $AWS_REGION > /dev/null 2>&1; then
-        echo "Creating ECR repository: $ECR_REPO_NAME"
-        aws ecr create-repository --repository-name $ECR_REPO_NAME --region $AWS_REGION
+    if ! aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $REGION > /dev/null 2>&1; then
+        echo "Creating ECR repository: $ECR_REPOSITORY"
+        aws ecr create-repository --repository-name $ECR_REPOSITORY --region $REGION
         echo -e "${GREEN}✅ ECR repository created${NC}"
     else
-        echo -e "${GREEN}✅ ECR repository already exists${NC}"
+        echo -e "${YELLOW}⚠️  ECR repository already exists${NC}"
     fi
     
     echo -e "${BLUE}🏷️  Tagging image...${NC}"
-    docker tag $ECR_REPO_NAME:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest
+    docker tag $ECR_REPOSITORY:latest $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest
     
     echo -e "${BLUE}📤 Pushing to ECR...${NC}"
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest
     
     echo -e "${GREEN}✅ Image pushed successfully${NC}"
 }
@@ -325,133 +340,137 @@ build_and_push() {
 deploy_lambda() {
     echo -e "${BLUE}🚀 Deploying Lambda function...${NC}"
     
-    IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest"
-    ROLE_ARN="arn:aws:iam::$AWS_ACCOUNT_ID:role/lambda-execution-role"
+    # Build and push the Docker image first
+    build_and_push
+    
+    # Get role ARN dynamically
+    ROLE_ARN=$(aws iam get-role --role-name $ROLE_NAME --query 'Role.Arn' --output text)
+    
+    IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest"
     
     # Check if function exists
-    check_aws_credentials || return 1
-    if aws lambda get-function --function-name $FUNCTION_NAME > /dev/null 2>&1; then
+    if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION &> /dev/null; then
         echo -e "${YELLOW}⚠️  Lambda function '$FUNCTION_NAME' already exists.${NC}"
         echo "What would you like to do?"
         echo "1. Update existing function (redeploy)"
         echo "2. Test existing function"
         echo "3. Cancel"
-        read -p "Choose an option (1-3): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[1]$ ]]; then
-            echo "Updating existing Lambda function..."
-            check_aws_credentials || return 1
-            aws lambda update-function-code --function-name $FUNCTION_NAME --image-uri $IMAGE_URI
-            
-            # Wait for function to be ready after code update
-            echo "Waiting for Lambda function to be ready after code update..."
-            while true; do
-                FUNCTION_STATE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text 2>/dev/null || echo "Unknown")
-                UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.LastUpdateStatus' --output text 2>/dev/null || echo "Unknown")
-                if [ "$FUNCTION_STATE" = "Active" ] && [ "$UPDATE_STATUS" = "Successful" ]; then
-                    echo -e "${GREEN}✅ Function is ready after code update${NC}"
-                    break
-                elif [ "$FUNCTION_STATE" = "Failed" ] || [ "$UPDATE_STATUS" = "Failed" ]; then
-                    echo -e "${RED}❌ Function code update failed${NC}"
-                    return 1
-                else
-                    echo "Function state: $FUNCTION_STATE, update status: $UPDATE_STATUS, waiting..."
-                    sleep 5
-                fi
-            done
-            
-            # Update environment variables if token is provided
-            if [ ! -z "$LUMIGO_TOKEN" ]; then
-                echo "Updating function configuration..."
-                check_aws_credentials || return 1
+        read -p "Choose an option (1-3): " choice
+        
+        case $choice in
+            1)
+                echo -e "${BLUE}Updating existing Lambda function...${NC}"
+                aws lambda update-function-code \
+                    --function-name $FUNCTION_NAME \
+                    --image-uri $IMAGE_URI \
+                    --region $REGION
+                
+                # Wait for function to be ready after code update
+                echo -e "${BLUE}Waiting for Lambda function to be ready after code update...${NC}"
+                while true; do
+                    STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.State' --output text)
+                    UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
+                    
+                    if [[ "$STATUS" == "Active" && "$UPDATE_STATUS" == "Successful" ]]; then
+                        echo -e "${GREEN}✅ Function is ready after code update${NC}"
+                        break
+                    elif [[ "$UPDATE_STATUS" == "Failed" ]]; then
+                        echo -e "${RED}❌ Function update failed${NC}"
+                        return 1
+                    else
+                        echo "Function state: $STATUS, update status: $UPDATE_STATUS, waiting..."
+                        sleep 5
+                    fi
+                done
+                
+                echo -e "${BLUE}Updating function configuration...${NC}"
                 aws lambda update-function-configuration \
                     --function-name $FUNCTION_NAME \
+                    --timeout 60 \
+                    --memory-size 512 \
                     --environment Variables="{
+                        OTEL_SERVICE_NAME=lambda-python-lumigo-container,
                         LUMIGO_TRACER_TOKEN=$LUMIGO_TOKEN,
-                        OTEL_SERVICE_NAME=lambda-python-lumigo-example,
                         LUMIGO_ENABLE_LOGS=true,
                         DYNAMODB_TABLE_NAME=example-table,
                         S3_BUCKET_NAME=example-bucket
                     }" \
-                    --timeout 30 \
-                    --memory-size 512
+                    --region $REGION
                 
                 # Wait for function to be ready after configuration update
-                echo "Waiting for Lambda function to be ready after configuration update..."
+                echo -e "${BLUE}Waiting for Lambda function to be ready after configuration update...${NC}"
                 while true; do
-                    FUNCTION_STATE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text 2>/dev/null || echo "Unknown")
-                    UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.LastUpdateStatus' --output text 2>/dev/null || echo "Unknown")
-                    if [ "$FUNCTION_STATE" = "Active" ] && [ "$UPDATE_STATUS" = "Successful" ]; then
+                    STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.State' --output text)
+                    UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
+                    
+                    if [[ "$STATUS" == "Active" && "$UPDATE_STATUS" == "Successful" ]]; then
                         echo -e "${GREEN}✅ Function is ready after configuration update${NC}"
                         break
-                    elif [ "$FUNCTION_STATE" = "Failed" ] || [ "$UPDATE_STATUS" = "Failed" ]; then
+                    elif [[ "$UPDATE_STATUS" == "Failed" ]]; then
                         echo -e "${RED}❌ Function configuration update failed${NC}"
                         return 1
                     else
-                        echo "Function state: $FUNCTION_STATE, update status: $UPDATE_STATUS, waiting..."
+                        echo "Function state: $STATUS, update status: $UPDATE_STATUS, waiting..."
                         sleep 5
                     fi
                 done
-            fi
-            
-            echo -e "${GREEN}✅ Lambda function updated successfully${NC}"
-        elif [[ $REPLY =~ ^[2]$ ]]; then
-            echo -e "${BLUE}🧪 Testing existing function...${NC}"
-            test_function_interactive
-            return
-        else
-            echo "Deployment cancelled."
-            exit 0
-        fi
+                
+                echo -e "${GREEN}✅ Lambda function updated successfully${NC}"
+                ;;
+            2)
+                test_function_interactive
+                return
+                ;;
+            3)
+                echo -e "${YELLOW}⚠️  Deployment cancelled${NC}"
+                return
+                ;;
+            *)
+                echo -e "${RED}❌ Invalid option${NC}"
+                return
+                ;;
+        esac
     else
-        echo "Creating new Lambda function..."
-        
-        # Create function with environment variables if token is provided
-        check_aws_credentials || return 1
-        if [ ! -z "$LUMIGO_TOKEN" ]; then
-            aws lambda create-function \
-                --function-name $FUNCTION_NAME \
-                --package-type Image \
-                --code ImageUri=$IMAGE_URI \
-                --role $ROLE_ARN \
-                --environment Variables="{
-                    LUMIGO_TRACER_TOKEN=$LUMIGO_TOKEN,
-                    OTEL_SERVICE_NAME=lambda-python-lumigo-example,
-                    LUMIGO_ENABLE_LOGS=true,
-                    DYNAMODB_TABLE_NAME=example-table,
-                    S3_BUCKET_NAME=example-bucket
-                }" \
-                --timeout 30 \
-                --memory-size 512
-        else
-            check_aws_credentials || return 1
-            aws lambda create-function \
-                --function-name $FUNCTION_NAME \
-                --package-type Image \
-                --code ImageUri=$IMAGE_URI \
-                --role $ROLE_ARN \
-                --timeout 30 \
-                --memory-size 512
-        fi
-        
-        echo -e "${GREEN}✅ Lambda function created${NC}"
-        
-        # Wait for function to be ready
-        echo "Waiting for Lambda function to be ready..."
-        while true; do
-            FUNCTION_STATE=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.State' --output text 2>/dev/null || echo "Unknown")
-            if [ "$FUNCTION_STATE" = "Active" ]; then
-                echo -e "${GREEN}✅ Function is ready${NC}"
-                break
-            elif [ "$FUNCTION_STATE" = "Failed" ]; then
-                echo -e "${RED}❌ Function creation failed${NC}"
-                return 1
-            else
-                echo "Function state: $FUNCTION_STATE, waiting..."
-                sleep 5
-            fi
-        done
+        echo -e "${BLUE}Creating new Lambda function...${NC}"
+        aws lambda create-function \
+            --function-name $FUNCTION_NAME \
+            --package-type Image \
+            --code ImageUri=$IMAGE_URI \
+            --role $ROLE_ARN \
+            --timeout 60 \
+            --memory-size 512 \
+            --environment Variables="{
+                OTEL_SERVICE_NAME=lambda-python-lumigo-container,
+                LUMIGO_TRACER_TOKEN=$LUMIGO_TOKEN,
+                LUMIGO_ENABLE_LOGS=true,
+                DYNAMODB_TABLE_NAME=example-table,
+                S3_BUCKET_NAME=example-bucket
+            }" \
+            --region $REGION
     fi
+    
+    # Wait for function to be active
+    echo -e "${BLUE}Waiting for function to be active...${NC}"
+    aws lambda wait function-active --function-name $FUNCTION_NAME --region $REGION
+    
+    echo -e "${GREEN}✅ Lambda function deployed successfully${NC}"
+    
+    # Ask if user wants to test
+    read -p "Would you like to test the function? (y/n): " test_choice
+    if [[ $test_choice =~ ^[Yy]$ ]]; then
+        test_function_interactive
+    fi
+    
+    echo ""
+    echo -e "${BLUE}📋 Summary:${NC}"
+    echo "Function Name: $FUNCTION_NAME"
+    echo "Region: $REGION"
+    echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest"
+    echo ""
+    echo -e "${BLUE}🔗 Next steps:${NC}"
+    echo "1. View function in AWS Lambda console"
+    echo "2. Monitor traces in Lumigo dashboard"
+    echo "3. Check CloudWatch logs for execution details"
 }
 
 # Function to test the function
@@ -556,10 +575,68 @@ test_function_interactive() {
     fi
 }
 
+# Main menu function
+main_menu() {
+    echo ""
+    echo -e "${BLUE}🔄 Main Menu${NC}"
+    echo "=================="
+    echo "1. 🧪 Test existing Lambda function"
+    echo "2. 🚀 Deploy new Lambda function"
+    echo "3. ❌ Exit"
+    echo ""
+    read -p "Choose an option (1-3): " choice
+    
+    case $choice in
+        1)
+            test_function_interactive
+            main_menu  # Return to main menu after testing
+            ;;
+        2)
+            deploy_lambda
+            main_menu  # Return to main menu after deployment
+            ;;
+        3)
+            echo -e "${GREEN}👋 Goodbye!${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}❌ Invalid option. Please try again.${NC}"
+            main_menu
+            ;;
+    esac
+}
+
 # Main execution
 main() {
-    # Start with initial prompt
-    initial_prompt
+    echo -e "${BLUE}🚀 Turnkey Lambda Deployment with Lumigo${NC}"
+    echo "=========================================="
+    echo ""
+    
+    # Check prerequisites
+    check_prerequisites
+    
+    # Setup IAM role
+    setup_iam_role
+    
+    # Setup Lumigo token
+    setup_lumigo_token
+    
+    # Check if function exists and show main menu
+    if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION &> /dev/null; then
+        echo -e "${GREEN}✅ Lambda function '$FUNCTION_NAME' exists${NC}"
+        main_menu
+    else
+        echo -e "${YELLOW}⚠️  Lambda function '$FUNCTION_NAME' does not exist${NC}"
+        echo "Would you like to deploy it now? (y/n): "
+        read -p "" deploy_choice
+        if [[ $deploy_choice =~ ^[Yy]$ ]]; then
+            deploy_lambda
+            main_menu
+        else
+            echo -e "${GREEN}👋 Goodbye!${NC}"
+            exit 0
+        fi
+    fi
 }
 
 # Run main function
