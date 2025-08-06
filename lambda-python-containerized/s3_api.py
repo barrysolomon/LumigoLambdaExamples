@@ -38,6 +38,9 @@ class S3DAL:
         """
         Initialize the DAL with a specific bucket name or use round-robin selection.
         """
+        self.s3 = boto3.client('s3')
+        self.bucket_name = bucket_name or "example-bucket"
+        self.round_robin_index = None
         if bucket_name:
             self.bucket_name = bucket_name
             self.round_robin_index = None
@@ -77,7 +80,7 @@ class S3DAL:
         
         try:
             try:
-                s3_client.head_bucket(Bucket=self.bucket_name)
+                self.s3.head_bucket(Bucket=self.bucket_name)
                 
                 logger.info(safe_json_serialize({
                     "Data_Source": "S3_Operations",
@@ -91,7 +94,7 @@ class S3DAL:
                 
                 return True
                 
-            except s3_client.exceptions.NoSuchBucket:
+            except self.s3.exceptions.NoSuchBucket:
                 logger.info(safe_json_serialize({
                     "Data_Source": "S3_Operations",
                     "Data_Target": "Bucket_Not_Found",
@@ -149,7 +152,7 @@ class S3DAL:
         }))
         
         try:
-            s3_client.create_bucket(Bucket=self.bucket_name)
+            self.s3.create_bucket(Bucket=self.bucket_name)
             
             logger.info(safe_json_serialize({
                 "Data_Source": "S3_Operations",
@@ -196,7 +199,7 @@ class S3DAL:
         }))
         
         try:
-            s3_client.put_object(
+            response = self.s3.put_object(
                 Bucket=self.bucket_name,
                 Key=key,
                 Body=content,
@@ -252,7 +255,7 @@ class S3DAL:
         }))
         
         try:
-            response = s3_client.list_objects_v2(
+            response = self.s3.list_objects_v2(
                 Bucket=self.bucket_name, 
                 Prefix=prefix
             )
@@ -314,7 +317,7 @@ class S3DAL:
         }))
         
         try:
-            s3_client.delete_object(Bucket=self.bucket_name, Key=key)
+            response = self.s3.delete_object(Bucket=self.bucket_name, Key=key)
             
             logger.info(safe_json_serialize({
                 "Data_Source": "S3_Operations",

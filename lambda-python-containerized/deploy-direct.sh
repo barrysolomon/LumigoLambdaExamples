@@ -315,9 +315,12 @@ test_lambda() {
     # Create test event
     cat > test-event.json << EOF
 {
-    "data": "test data from direct deployment",
-    "test": true,
-    "source": "direct-deploy-script"
+  "data": "hello world from lumigo",
+  "test": true,
+  "timestamp": "2024-01-01T00:00:00Z",
+  "user_id": "user123",
+  "request_type": "api_call",
+  "source": "direct-deploy-script"
 }
 EOF
     
@@ -336,7 +339,7 @@ EOF
     cat response.json | jq '.' 2>/dev/null || cat response.json
     
     # Clean up
-    rm -f test-event.json response.json
+    #rm -f test-event.json response.json
     
     print_success "Testing completed"
 }

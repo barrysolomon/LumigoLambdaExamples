@@ -27,47 +27,26 @@ logger.setLevel(logging.INFO)
 def add_execution_tag(key, value):
     """
     Add an execution tag to the current span.
-    Execution tags help identify, search for, and filter invocations in Lumigo.
+    Only used for resource names (table names, bucket names, endpoints).
     """
     try:
-        # Use the correct OpenTelemetry API
-        active_span = trace.get_current_span()
-        if active_span:
-            # Add the lumigo.execution_tags prefix as required by Lumigo
-            active_span.set_attribute(f"lumigo.execution_tags.{key}", str(value))
-            logger.info(f"Added execution tag: {key} = {value}")
+        span = trace.get_current_span()
+        span.set_attribute(f"lumigo.execution_tags.{key}", str(value))
+        logger.info(f"Added execution tag: {key} = {value}")
     except Exception as e:
-        logger.info(f"Failed to add execution tag {key}: {str(e)}")
+        logger.error(f"Failed to add execution tag {key}: {str(e)}")
 
-def add_programmatic_error(error_type, error_message, error_attributes=None):
+def add_programmatic_error(error_type, error_message):
     """
     Add a programmatic error to the current span.
-    This helps Lumigo identify and categorize errors for better monitoring.
-    
-    Args:
-        error_type (str): The type/category of the error (e.g., "HTTP_REQUEST_FAILED")
-        error_message (str): The error message
-        error_attributes (dict): Additional attributes to include with the error
     """
     try:
-        active_span = trace.get_current_span()
-        if active_span:
-            # Add error attributes to the span
-            active_span.set_attribute("lumigo.error.type", error_type)
-            active_span.set_attribute("lumigo.error.message", error_message)
-            
-            # Add additional error attributes if provided
-            if error_attributes:
-                for key, value in error_attributes.items():
-                    active_span.set_attribute(f"lumigo.error.{key}", str(value))
-            
-            # Mark the span as having an error
-            active_span.set_attribute("lumigo.error", "true")
-            
-            logger.info(f"Added programmatic error: {error_type} - {error_message}")
-            
+        span = trace.get_current_span()
+        span.set_attribute("lumigo.error.type", error_type)
+        span.set_attribute("lumigo.error.message", error_message)
+        logger.error(f"Added programmatic error: {error_type} - {error_message}")
     except Exception as e:
-        logger.info(f"Failed to add programmatic error {error_type}: {str(e)}")
+        logger.error(f"Failed to add programmatic error: {str(e)}")
 
 def safe_json_serialize(obj):
     """
@@ -83,39 +62,6 @@ def safe_json_serialize(obj):
     
     return json.dumps(obj, default=default_serializer)
 
-def log_call_params(service_name):
-    """
-    Decorator to log function call parameters.
-    
-    Args:
-        service_name (str): Name of the service (e.g., "S3", "Database", "API")
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Extract key parameters for logging
-            params = {}
-            
-            # Look for common parameter names
-            if 'table_name' in kwargs:
-                params['table_name'] = kwargs['table_name']
-            if 'bucket_name' in kwargs:
-                params['bucket_name'] = kwargs['bucket_name']
-            if 'endpoint' in kwargs:
-                params['endpoint'] = kwargs['endpoint']
-            
-            # Log the call with parameters
-            if params:
-                param_str = ", ".join([f"{k}={v}" for k, v in params.items()])
-                logger.info(f"{service_name} Call - {func.__name__} with params: {param_str}")
-            else:
-                logger.info(f"{service_name} Call - {func.__name__}")
-            
-            return func(*args, **kwargs)
-        return wrapper
-    return decorator
-
-@log_call_params("S3")
 def perform_s3_operations():
     """
     Example: Wrap existing S3 operations with Lumigo instrumentation.
@@ -125,8 +71,19 @@ def perform_s3_operations():
         # Create DAL instance
         dal = S3DAL()
         
-        # Log bucket information
-        logger.info(f"S3 Operations - Using bucket: {dal.bucket_name}")
+        # Add execution tag for S3 bucket
+        add_execution_tag("s3_bucket", dal.bucket_name)
+        
+        logger.info(safe_json_serialize({
+            "Data_Source": "Lambda_Handler",
+            "Data_Target": "S3_Operations",
+            "Data_Artifacts": {
+                "bucket_name": dal.bucket_name,
+                "aws_service": "S3",
+                "action": "s3_operations_start",
+                "service": "S3_API"
+            }
+        }))
         
         # Check if bucket exists and create if needed
         bucket_ready = dal.ensure_bucket_exists()
@@ -136,28 +93,112 @@ def perform_s3_operations():
             operation_id = str(uuid.uuid4())
             timestamp = datetime.utcnow().isoformat()
             
-            logger.info(f"S3 Lifecycle Operations - Starting with operation_id: {operation_id}")
+            logger.info(safe_json_serialize({
+                "Data_Source": "S3_Operations",
+                "Data_Target": "Lifecycle_Operations_Start",
+                "Data_Artifacts": {
+                    "bucket_name": dal.bucket_name,
+                    "operation_id": operation_id,
+                    "timestamp": timestamp,
+                    "action": "lifecycle_operations_start",
+                    "service": "S3_API"
+                }
+            }))
             
             try:
-                # Step 1: Upload sample objects
-                logger.info(f"S3 Upload - Starting upload to bucket: {dal.bucket_name}")
+                # Step 1: Upload sample objects (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Upload_Objects",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "action": "upload_objects_start",
+                        "service": "S3_API"
+                    }
+                }))
+                
                 upload_results = dal.upload_sample_objects(operation_id, timestamp)
                 objects_created = upload_results.get('objects_created', 0)
-                logger.info(f"S3 Upload - Completed. Objects created: {objects_created}")
                 
-                # Step 2: List objects in the bucket
-                logger.info(f"S3 List - Listing objects in bucket: {dal.bucket_name}")
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Upload_Objects_Complete",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "objects_created": objects_created,
+                        "action": "upload_objects_complete",
+                        "service": "S3_API"
+                    }
+                }))
+                
+                # Step 2: List objects in the bucket (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "List_Objects",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "action": "list_objects_start",
+                        "service": "S3_API"
+                    }
+                }))
+                
                 list_results = dal.list_bucket_objects(operation_id)
                 object_count = list_results.get('object_count', 0)
-                logger.info(f"S3 List - Completed. Objects found: {object_count}")
                 
-                # Step 3: Delete the objects we created
-                logger.info(f"S3 Delete - Starting deletion from bucket: {dal.bucket_name}")
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "List_Objects_Complete",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "object_count": object_count,
+                        "action": "list_objects_complete",
+                        "service": "S3_API"
+                    }
+                }))
+                
+                # Step 3: Delete the objects we created (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Delete_Objects",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "action": "delete_objects_start",
+                        "service": "S3_API"
+                    }
+                }))
+                
                 delete_results = dal.delete_bucket_objects(operation_id)
                 objects_deleted = delete_results.get('objects_deleted', 0)
-                logger.info(f"S3 Delete - Completed. Objects deleted: {objects_deleted}")
                 
-                logger.info(f"S3 Lifecycle Operations - Completed successfully")
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Delete_Objects_Complete",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "objects_deleted": objects_deleted,
+                        "action": "delete_objects_complete",
+                        "service": "S3_API"
+                    }
+                }))
+                
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Lifecycle_Operations_Complete",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "objects_created": objects_created,
+                        "objects_deleted": objects_deleted,
+                        "action": "lifecycle_operations_complete",
+                        "service": "S3_API"
+                    }
+                }))
                 
                 return {
                     'bucket_used': dal.bucket_name,
@@ -166,115 +207,292 @@ def perform_s3_operations():
                 }
                 
             except Exception as e:
-                logger.error(f"S3 Lifecycle Operations - Failed: {str(e)}")
+                logger.error(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Lifecycle_Operations_Error",
+                    "Data_Artifacts": {
+                        "bucket_name": dal.bucket_name,
+                        "operation_id": operation_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "action": "lifecycle_operations_error",
+                        "service": "S3_API"
+                    }
+                }))
                 raise
         else:
-            logger.error(f"S3 Setup - Failed to setup bucket: {dal.bucket_name}")
+            logger.error(safe_json_serialize({
+                "Data_Source": "S3_Operations",
+                "Data_Target": "Bucket_Setup_Error",
+                "Data_Artifacts": {
+                    "bucket_name": dal.bucket_name,
+                    "error": "Failed to setup bucket",
+                    "action": "bucket_setup_error",
+                    "service": "S3_API"
+                }
+            }))
             return {
                 'bucket_used': dal.bucket_name,
                 'status': 'bucket_setup_failed'
             }
             
     except Exception as e:
-        logger.error(f"S3 Operations - Error: {str(e)}")
+        logger.error(safe_json_serialize({
+            "Data_Source": "S3_Operations",
+            "Data_Target": "S3_Operations_Error",
+            "Data_Artifacts": {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "action": "s3_operations_error",
+                "service": "S3_API"
+            }
+        }))
         return {
+            'bucket_used': 'unknown',
+            'status': 'error',
             'error': str(e)
         }
 
-@log_call_params("API")
 def perform_api_operations():
     """
-    Example: Wrap existing API calls with Lumigo instrumentation.
-    This is how clients would instrument their existing HTTP requests.
+    Example: Wrap existing API operations with Lumigo instrumentation.
+    This is how clients would instrument their existing API calls.
     """
     try:
         # Create DAL instance
         dal = APIDAL()
         
-        # Log API endpoint information
-        logger.info(f"API Operations - Using endpoint: {dal.endpoint}")
+        # Round-robin through API endpoints
+        api_endpoints = [
+            "https://jsonplaceholder.typicode.com/posts/1",
+            "https://jsonplaceholder.typicode.com/posts/2", 
+            "https://jsonplaceholder.typicode.com/posts/3"
+        ]
+        endpoint_index = (int(time.time()) % len(api_endpoints))
+        endpoint = api_endpoints[endpoint_index]
         
-        # Perform API operations using DAL
-        logger.info(f"API Request - Making request to: {dal.endpoint}")
-        api_results = dal.fetch_data()
+        # Add execution tag for API URL
+        add_execution_tag("api_url", endpoint)
         
-        logger.info(f"API Request - Completed successfully")
+        logger.info(safe_json_serialize({
+            "Data_Source": "Lambda_Handler",
+            "Data_Target": "API_Operations",
+            "Data_Artifacts": {
+                "endpoint": endpoint,
+                "round_robin_index": endpoint_index,
+                "action": "api_operations_start",
+                "service": "JSONPlaceholder_API"
+            }
+        }))
+        
+        # Make the API call (wrapped service call)
+        response = dal.fetch_data(endpoint)
+        
+        logger.info(safe_json_serialize({
+            "Data_Source": "API_Operations",
+            "Data_Target": "API_Call_Complete",
+            "Data_Artifacts": {
+                "endpoint": endpoint,
+                "status_code": response['status_code'],
+                "response_time": response['response_time'],
+                "post_id": response['data'].get('id'),
+                "post_title": response['data'].get('title'),
+                "action": "api_call_complete",
+                "service": "JSONPlaceholder_API"
+            }
+        }))
         
         return {
-            'endpoint_used': dal.endpoint,
-            'post_id': api_results.get('post_id'),
-            'post_title': api_results.get('post_title'),
-            'status_code': api_results.get('status_code'),
-            'response_time': api_results.get('response_time')
+            'endpoint_used': endpoint,
+            'post_id': response['data'].get('id'),
+            'post_title': response['data'].get('title'),
+            'status_code': response['status_code'],
+            'response_time': response['response_time']
         }
         
     except Exception as e:
-        logger.error(f"API Operations - Error: {str(e)}")
+        logger.error(safe_json_serialize({
+            "Data_Source": "API_Operations",
+            "Data_Target": "API_Error",
+            "Data_Artifacts": {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "action": "api_operations_error",
+                "service": "JSONPlaceholder_API"
+            }
+        }))
         return {
+            'endpoint_used': 'unknown',
+            'status': 'error',
             'error': str(e)
         }
 
-@log_call_params("Database")
 def perform_database_operations(table_name=None):
     """
     Example: Wrap existing DynamoDB operations with Lumigo instrumentation.
-    This is how clients would instrument their existing database calls.
-    
-    Args:
-        table_name (str, optional): Specific table name to use. If None, uses round-robin selection.
+    This is how clients would instrument their existing DynamoDB calls.
     """
     try:
-        # Create DAL instance with optional table name
-        dal = DynamoDBDAL(table_name=table_name)
+        # Create DAL instance
+        dal = DynamoDBDAL(table_name)
         
-        # Log table information
-        logger.info(f"Database Operations - Using table: {dal.table_name}")
+        # Add execution tags for database and table
+        add_execution_tag("database", "DynamoDB")
+        add_execution_tag("database_table", dal.table_name)
         
-        # Check if table exists and create if needed
+        logger.info(safe_json_serialize({
+            "Data_Source": "Lambda_Handler",
+            "Data_Target": "Database_Operations",
+            "Data_Artifacts": {
+                "table_name": dal.table_name,
+                "aws_service": "DynamoDB",
+                "action": "database_operations_start",
+                "service": "DynamoDB_API"
+            }
+        }))
+        
+        # Ensure table exists
         table_ready = dal.ensure_table_exists()
         
         if table_ready:
-            # Generate a unique item ID for this operation
+            # Generate unique item ID
             item_id = str(uuid.uuid4())
             timestamp = datetime.utcnow().isoformat()
             
-            logger.info(f"Database CRUD Operations - Starting with item_id: {item_id}")
+            logger.info(safe_json_serialize({
+                "Data_Source": "Database_Operations",
+                "Data_Target": "CRUD_Operations_Start",
+                "Data_Artifacts": {
+                    "table_name": dal.table_name,
+                    "item_id": item_id,
+                    "timestamp": timestamp,
+                    "action": "crud_operations_start",
+                    "service": "DynamoDB_API"
+                }
+            }))
             
             try:
-                # CREATE operation
-                logger.info(f"Database CREATE - Creating item in table: {dal.table_name}")
+                # Step 1: Create item (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Create_Item",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "create_item_start",
+                        "service": "DynamoDB_API"
+                    }
+                }))
+                
                 item_data = {
-                    'id': item_id,
-                    'timestamp': timestamp,
-                    'data': 'Sample data for CRUD demonstration',
-                    'status': 'active',
-                    'metadata': {'created_by': 'lambda-function', 'version': '1.0'}
+                    'id': {'S': item_id},
+                    'data': {'S': 'Sample data'},
+                    'timestamp': {'S': timestamp},
+                    'status': {'S': 'active'}
                 }
+                create_response = dal.create_item(item_data)
                 
-                create_result = dal.create_item(item_data)
-                logger.info(f"Database CREATE - Completed successfully")
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Create_Item_Complete",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "create_item_complete",
+                        "service": "DynamoDB_API"
+                    }
+                }))
                 
-                # READ operation
-                logger.info(f"Database READ - Reading item from table: {dal.table_name}")
-                read_result = dal.read_item(item_id)
-                logger.info(f"Database READ - Completed successfully")
+                # Step 2: Read item (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Read_Item",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "read_item_start",
+                        "service": "DynamoDB_API"
+                    }
+                }))
                 
-                # UPDATE operation
-                logger.info(f"Database UPDATE - Updating item in table: {dal.table_name}")
-                update_data = {
+                read_response = dal.read_item(item_id)
+                
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Read_Item_Complete",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "read_item_complete",
+                        "service": "DynamoDB_API"
+                    }
+                }))
+                
+                # Step 3: Update item (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Update_Item",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "update_item_start",
+                        "service": "DynamoDB_API"
+                    }
+                }))
+                
+                updates = {
                     'status': 'updated',
-                    'updated_at': datetime.utcnow().isoformat()
+                    'updated_at': timestamp
                 }
+                update_response = dal.update_item(item_id, updates)
                 
-                update_result = dal.update_item(item_id, update_data)
-                logger.info(f"Database UPDATE - Completed successfully")
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Update_Item_Complete",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "update_item_complete",
+                        "service": "DynamoDB_API"
+                    }
+                }))
                 
-                # DELETE operation (skipped)
-                logger.info(f"Database DELETE - Skipping delete for data preservation")
-                delete_result = dal.delete_item(item_id)
-                logger.info(f"Database DELETE - Skipped successfully")
+                # Step 4: Delete item (wrapped service call)
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Delete_Item",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "delete_item_start",
+                        "service": "DynamoDB_API"
+                    }
+                }))
                 
-                logger.info(f"Database CRUD Operations - Completed successfully")
+                delete_response = dal.delete_item(item_id)
+                
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "Delete_Item_Complete",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "action": "delete_item_complete",
+                        "service": "DynamoDB_API"
+                    }
+                }))
+                
+                logger.info(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "CRUD_Operations_Complete",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "operations_count": 4,
+                        "action": "crud_operations_complete",
+                        "service": "DynamoDB_API"
+                    }
+                }))
                 
                 return {
                     'table_used': dal.table_name,
@@ -283,18 +501,49 @@ def perform_database_operations(table_name=None):
                 }
                 
             except Exception as e:
-                logger.error(f"Database CRUD Operations - Failed: {str(e)}")
+                logger.error(safe_json_serialize({
+                    "Data_Source": "Database_Operations",
+                    "Data_Target": "CRUD_Operations_Error",
+                    "Data_Artifacts": {
+                        "table_name": dal.table_name,
+                        "item_id": item_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "action": "crud_operations_error",
+                        "service": "DynamoDB_API"
+                    }
+                }))
                 raise
         else:
-            logger.error(f"Database Setup - Failed to setup table: {dal.table_name}")
+            logger.error(safe_json_serialize({
+                "Data_Source": "Database_Operations",
+                "Data_Target": "Table_Setup_Error",
+                "Data_Artifacts": {
+                    "table_name": dal.table_name,
+                    "error": "Failed to setup table",
+                    "action": "table_setup_error",
+                    "service": "DynamoDB_API"
+                }
+            }))
             return {
                 'table_used': dal.table_name,
                 'status': 'table_setup_failed'
             }
             
     except Exception as e:
-        logger.error(f"Database Operations - Error: {str(e)}")
+        logger.error(safe_json_serialize({
+            "Data_Source": "Database_Operations",
+            "Data_Target": "Database_Operations_Error",
+            "Data_Artifacts": {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "action": "database_operations_error",
+                "service": "DynamoDB_API"
+            }
+        }))
         return {
+            'table_used': 'unknown',
+            'status': 'error',
             'error': str(e)
         }
 

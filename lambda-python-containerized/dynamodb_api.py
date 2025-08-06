@@ -6,6 +6,8 @@ import boto3
 import uuid
 from datetime import datetime
 from opentelemetry import trace
+from boto3 import client
+from botocore.exceptions import ClientError
 
 # Configure logging
 logger = logging.getLogger()
@@ -38,134 +40,105 @@ class DynamoDBDAL:
         """
         Initialize the DAL with a specific table name or use round-robin selection.
         """
-        if table_name:
-            self.table_name = table_name
-            self.round_robin_index = None
-        else:
-            # Round-robin through DynamoDB tables
-            dynamodb_tables = [
-                os.environ.get('DYNAMODB_TABLE_NAME', 'example-table'),
-                os.environ.get('DYNAMODB_TABLE_NAME', 'example-table') + '-2',
-                os.environ.get('DYNAMODB_TABLE_NAME', 'example-table') + '-3'
-            ]
-            self.round_robin_index = (int(time.time()) % len(dynamodb_tables))
-            self.table_name = dynamodb_tables[self.round_robin_index]
-        
-        logger.info(safe_json_serialize({
-            "Data_Source": "Lambda_Handler",
-            "Data_Target": "Database_Operations",
-            "Data_Artifacts": {
-                "table_name": self.table_name,
-                "aws_service": "DynamoDB",
-                "round_robin_index": self.round_robin_index
-            }
-        }))
+        self.dynamodb = client('dynamodb')
+        self.table_name = table_name or "example-table"
+    
+    def create_item(self, item):
+        """Create an item in DynamoDB table."""
+        try:
+            response = self.dynamodb.put_item(
+                TableName=self.table_name,
+                Item=item
+            )
+            logger.info(f"DynamoDB Create - Item created successfully")
+            return response
+        except Exception as e:
+            logger.error(f"DynamoDB Create - Error: {str(e)}")
+            raise
+    
+    def read_item(self, item_id):
+        """Read an item from DynamoDB table."""
+        try:
+            response = self.dynamodb.get_item(
+                TableName=self.table_name,
+                Key={'id': {'S': item_id}}
+            )
+            logger.info(f"DynamoDB Read - Item retrieved successfully")
+            return response
+        except Exception as e:
+            logger.error(f"DynamoDB Read - Error: {str(e)}")
+            raise
+    
+    def update_item(self, item_id, updates):
+        """Update an item in DynamoDB table."""
+        try:
+            update_expression = "SET "
+            expression_values = {}
+            
+            for key, value in updates.items():
+                update_expression += f"#{key} = :{key}, "
+                expression_values[f":{key}"] = {'S': str(value)}
+                expression_values[f"#{key}"] = key
+            
+            update_expression = update_expression.rstrip(", ")
+            
+            response = self.dynamodb.update_item(
+                TableName=self.table_name,
+                Key={'id': {'S': item_id}},
+                UpdateExpression=update_expression,
+                ExpressionAttributeValues=expression_values,
+                ExpressionAttributeNames=expression_values,
+                ReturnValues="ALL_NEW"
+            )
+            logger.info(f"DynamoDB Update - Item updated successfully")
+            return response
+        except Exception as e:
+            logger.error(f"DynamoDB Update - Error: {str(e)}")
+            raise
+    
+    def delete_item(self, item_id):
+        """Delete an item from DynamoDB table."""
+        try:
+            response = self.dynamodb.delete_item(
+                TableName=self.table_name,
+                Key={'id': {'S': item_id}}
+            )
+            logger.info(f"DynamoDB Delete - Item deleted successfully")
+            return response
+        except Exception as e:
+            logger.error(f"DynamoDB Delete - Error: {str(e)}")
+            raise
     
     def ensure_table_exists(self):
-        """
-        Check if DynamoDB table exists and create it if needed.
-        """
-        logger.info(safe_json_serialize({
-            "Data_Source": "Database_Operations",
-            "Data_Target": "Check_Table_Exists",
-            "Data_Artifacts": {
-                "table_name": self.table_name,
-                "action": "check_table_exists",
-                "aws_service": "DynamoDB"
-            }
-        }))
-        
+        """Ensure DynamoDB table exists, create if it doesn't."""
         try:
-            try:
-                response = dynamodb_client.describe_table(TableName=self.table_name)
-                table_status = response['Table']['TableStatus']
+            # Check if table exists
+            self.dynamodb.describe_table(TableName=self.table_name)
+            logger.info(f"DynamoDB Table - {self.table_name} already exists")
+            return True
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                # Create table
+                logger.info(f"DynamoDB Table - Creating {self.table_name}")
+                self.dynamodb.create_table(
+                    TableName=self.table_name,
+                    KeySchema=[
+                        {'AttributeName': 'id', 'KeyType': 'HASH'}
+                    ],
+                    AttributeDefinitions=[
+                        {'AttributeName': 'id', 'AttributeType': 'S'}
+                    ],
+                    BillingMode='PAY_PER_REQUEST'
+                )
                 
-                logger.info(safe_json_serialize({
-                    "Data_Source": "Database_Operations",
-                    "Data_Target": "Table_Exists",
-                    "Data_Artifacts": {
-                        "table_name": self.table_name,
-                        "table_status": table_status,
-                        "action": "table_exists",
-                        "aws_service": "DynamoDB",
-                        "table_info": {
-                            "creation_date": response['Table'].get('CreationDateTime'),
-                            "item_count": response['Table'].get('ItemCount', 0),
-                            "table_size_bytes": response['Table'].get('TableSizeBytes', 0)
-                        }
-                    }
-                }))
-                
-                if table_status == 'ACTIVE':
-                    return True
-                elif table_status in ['CREATING', 'UPDATING']:
-                    logger.info(safe_json_serialize({
-                        "Data_Source": "Database_Operations",
-                        "Data_Target": "Table_Creating_Updating",
-                        "Data_Artifacts": {
-                            "table_name": self.table_name,
-                            "table_status": table_status,
-                            "action": "wait_for_table_active",
-                            "aws_service": "DynamoDB"
-                        }
-                    }))
-                    
-                    # Wait for table to become active
-                    waiter = dynamodb_client.get_waiter('table_exists')
-                    waiter.wait(TableName=self.table_name)
-                    
-                    logger.info(safe_json_serialize({
-                        "Data_Source": "Database_Operations",
-                        "Data_Target": "Table_Now_Active",
-                        "Data_Artifacts": {
-                            "table_name": self.table_name,
-                            "action": "table_now_active",
-                            "aws_service": "DynamoDB"
-                        }
-                    }))
-                    
-                    return True
-                else:
-                    logger.info(safe_json_serialize({
-                        "Data_Source": "Database_Operations",
-                        "Data_Target": "Table_Invalid_Status",
-                        "Data_Artifacts": {
-                            "table_name": self.table_name,
-                            "table_status": table_status,
-                            "action": "table_invalid_status",
-                            "aws_service": "DynamoDB"
-                        }
-                    }))
-                    
-                    return False
-                    
-            except dynamodb_client.exceptions.ResourceNotFoundException:
-                logger.info(safe_json_serialize({
-                    "Data_Source": "Database_Operations",
-                    "Data_Target": "Table_Not_Found",
-                    "Data_Artifacts": {
-                        "table_name": self.table_name,
-                        "action": "table_not_found",
-                        "aws_service": "DynamoDB"
-                    }
-                }))
-                
-                return self.create_table()
-                
-        except Exception as e:
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Check_Table_Error",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "action": "check_table_error",
-                    "aws_service": "DynamoDB"
-                }
-            }))
-            
-            return False
+                # Wait for table to be active
+                waiter = self.dynamodb.get_waiter('table_exists')
+                waiter.wait(TableName=self.table_name)
+                logger.info(f"DynamoDB Table - {self.table_name} created successfully")
+                return True
+            else:
+                logger.error(f"DynamoDB Table - Error: {str(e)}")
+                return False
     
     def create_table(self):
         """
@@ -270,246 +243,6 @@ class DynamoDBDAL:
                 }))
                 
                 return False
-    
-    def create_item(self, item_data):
-        """
-        Create a new item in the DynamoDB table.
-        """
-        item_id = item_data.get('id', str(uuid.uuid4()))
-        
-        logger.info(safe_json_serialize({
-            "Data_Source": "Database_Operations",
-            "Data_Target": "Create_Item",
-            "Data_Artifacts": {
-                "table_name": self.table_name,
-                "item_id": item_id,
-                "action": "create_item",
-                "item_data": item_data
-            }
-        }))
-        
-        try:
-            # Convert item_data to DynamoDB format
-            dynamodb_item = {}
-            for key, value in item_data.items():
-                if isinstance(value, dict):
-                    dynamodb_item[key] = {'S': json.dumps(value)}
-                else:
-                    dynamodb_item[key] = {'S': str(value)}
-            
-            response = dynamodb_client.put_item(
-                TableName=self.table_name,
-                Item=dynamodb_item
-            )
-            
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Create_Item_Success",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "item_id": item_id,
-                    "action": "create_item_success",
-                    "response_metadata": {
-                        "request_id": response.get('ResponseMetadata', {}).get('RequestId', 'unknown'),
-                        "consumed_capacity": response.get('ConsumedCapacity', {})
-                    }
-                }
-            }))
-            
-            return {
-                'status': 'success',
-                'item_id': item_id,
-                'response': {
-                    'consumed_capacity': response.get('ConsumedCapacity', {}),
-                    'request_id': response.get('ResponseMetadata', {}).get('RequestId', 'unknown')
-                }
-            }
-            
-        except Exception as e:
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Create_Item_Error",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "item_id": item_id,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "action": "create_item_error"
-                }
-            }))
-            
-            raise
-    
-    def read_item(self, item_id):
-        """
-        Read an item from the DynamoDB table.
-        """
-        logger.info(safe_json_serialize({
-            "Data_Source": "Database_Operations",
-            "Data_Target": "Read_Item",
-            "Data_Artifacts": {
-                "table_name": self.table_name,
-                "item_id": item_id,
-                "action": "read_item",
-                "key": {"id": item_id}
-            }
-        }))
-        
-        try:
-            response = dynamodb_client.get_item(
-                TableName=self.table_name,
-                Key={'id': {'S': item_id}}
-            )
-            
-            item_found = 'Item' in response
-            
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Read_Item_Result",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "item_id": item_id,
-                    "action": "read_item_result",
-                    "item_found": item_found,
-                    "item_data": response.get('Item', {}),
-                    "response_metadata": {
-                        "request_id": response.get('ResponseMetadata', {}).get('RequestId', 'unknown'),
-                        "consumed_capacity": response.get('ConsumedCapacity', {})
-                    }
-                }
-            }))
-            
-            return {
-                'status': 'success' if item_found else 'not_found',
-                'item_id': item_id,
-                'item_found': item_found,
-                'item_data': response.get('Item', {}),
-                'response': {
-                    'consumed_capacity': response.get('ConsumedCapacity', {}),
-                    'request_id': response.get('ResponseMetadata', {}).get('RequestId', 'unknown')
-                }
-            }
-            
-        except Exception as e:
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Read_Item_Error",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "item_id": item_id,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "action": "read_item_error"
-                }
-            }))
-            
-            raise
-    
-    def update_item(self, item_id, update_data):
-        """
-        Update an item in the DynamoDB table.
-        """
-        logger.info(safe_json_serialize({
-            "Data_Source": "Database_Operations",
-            "Data_Target": "Update_Item",
-            "Data_Artifacts": {
-                "table_name": self.table_name,
-                "item_id": item_id,
-                "action": "update_item",
-                "update_data": update_data
-            }
-        }))
-        
-        try:
-            # Build update expression and attributes
-            update_expression = "SET "
-            expression_attribute_names = {}
-            expression_attribute_values = {}
-            
-            for i, (key, value) in enumerate(update_data.items()):
-                attr_name = f"#{key}"
-                attr_value = f":{key}"
-                
-                update_expression += f"{attr_name} = {attr_value}, "
-                expression_attribute_names[attr_name] = key
-                expression_attribute_values[attr_value] = {'S': str(value)}
-            
-            # Remove trailing comma and space
-            update_expression = update_expression.rstrip(", ")
-            
-            response = dynamodb_client.update_item(
-                TableName=self.table_name,
-                Key={'id': {'S': item_id}},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=expression_attribute_names,
-                ExpressionAttributeValues=expression_attribute_values,
-                ReturnValues='ALL_NEW'
-            )
-            
-            updated_attributes = list(response.get('Attributes', {}).keys())
-            
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Update_Item_Success",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "item_id": item_id,
-                    "action": "update_item_success",
-                    "updated_attributes": updated_attributes,
-                    "new_item_data": response.get('Attributes', {}),
-                    "response_metadata": {
-                        "request_id": response.get('ResponseMetadata', {}).get('RequestId', 'unknown'),
-                        "consumed_capacity": response.get('ConsumedCapacity', {})
-                    }
-                }
-            }))
-            
-            return {
-                'status': 'success',
-                'item_id': item_id,
-                'updated_attributes': updated_attributes,
-                'response': {
-                    'consumed_capacity': response.get('ConsumedCapacity', {}),
-                    'request_id': response.get('ResponseMetadata', {}).get('RequestId', 'unknown')
-                }
-            }
-            
-        except Exception as e:
-            logger.info(safe_json_serialize({
-                "Data_Source": "Database_Operations",
-                "Data_Target": "Update_Item_Error",
-                "Data_Artifacts": {
-                    "table_name": self.table_name,
-                    "item_id": item_id,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "action": "update_item_error"
-                }
-            }))
-            
-            raise
-    
-    def delete_item(self, item_id):
-        """
-        Delete an item from the DynamoDB table (currently skipped for data preservation).
-        """
-        logger.info(safe_json_serialize({
-            "Data_Source": "Database_Operations",
-            "Data_Target": "Delete_Item_Skipped",
-            "Data_Artifacts": {
-                "table_name": self.table_name,
-                "item_id": item_id,
-                "action": "delete_item_skipped",
-                "reason": "Data preservation requested - keeping items in table",
-                "aws_service": "DynamoDB"
-            }
-        }))
-        
-        return {
-            'status': 'skipped',
-            'item_id': item_id,
-            'reason': 'Data preservation requested - keeping items in table'
-        }
     
     def delete_table(self):
         """
