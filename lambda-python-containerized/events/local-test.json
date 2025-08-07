@@ -1,0 +1,8 @@
+{
+  "data": "hello world from lumigo sam local test",
+  "test": true,
+  "timestamp": "2024-01-01T00:00:00Z",
+  "user_id": "user123",
+  "request_type": "sam_local_test",
+  "source": "sam-local"
+} 

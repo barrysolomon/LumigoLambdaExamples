@@ -74,11 +74,12 @@ class DynamoDBDAL:
         try:
             update_expression = "SET "
             expression_values = {}
+            expression_names = {}
             
             for key, value in updates.items():
                 update_expression += f"#{key} = :{key}, "
                 expression_values[f":{key}"] = {'S': str(value)}
-                expression_values[f"#{key}"] = key
+                expression_names[f"#{key}"] = key
             
             update_expression = update_expression.rstrip(", ")
             
@@ -87,7 +88,7 @@ class DynamoDBDAL:
                 Key={'id': {'S': item_id}},
                 UpdateExpression=update_expression,
                 ExpressionAttributeValues=expression_values,
-                ExpressionAttributeNames=expression_values,
+                ExpressionAttributeNames=expression_names,
                 ReturnValues="ALL_NEW"
             )
             logger.info(f"DynamoDB Update - Item updated successfully")

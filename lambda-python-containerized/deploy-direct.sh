@@ -18,7 +18,7 @@ NC='\033[0m' # No Color
 # Configuration
 FUNCTION_NAME="lambda-python-lumigo-direct"
 REGION="us-east-1"
-RUNTIME="python3.11"
+RUNTIME="python3.12"
 HANDLER="lambda_function.lambda_handler"
 TIMEOUT=30
 MEMORY_SIZE=512
@@ -130,6 +130,11 @@ EOF
         --role-name $ROLE_NAME \
         --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
     
+    # Attach RDS full access policy
+    aws iam attach-role-policy \
+        --role-name $ROLE_NAME \
+        --policy-arn arn:aws:iam::aws:policy/AmazonRDSFullAccess
+    
     # Wait for role to be available
     print_status "Waiting for IAM role to be available..."
     aws iam wait role-exists --role-name $ROLE_NAME
@@ -180,16 +185,23 @@ create_deployment_package() {
     cp dynamodb_api.py "$PACKAGE_DIR/"
     cp s3_api.py "$PACKAGE_DIR/"
     cp api_calls.py "$PACKAGE_DIR/"
+    cp postgresql_api.py "$PACKAGE_DIR/"
     
     # Create a clean virtual environment for dependencies
     print_status "Creating clean virtual environment for dependencies..."
-    python3 -m venv "$TEMP_DIR/venv"
+    python3.12 -m venv "$TEMP_DIR/venv"
     source "$TEMP_DIR/venv/bin/activate"
     
     # Install dependencies in clean environment
     print_status "Installing Python dependencies in clean environment..."
     pip install --quiet --upgrade pip
-    pip install --quiet -r requirements.txt -t "$PACKAGE_DIR"
+    
+    # Install regular dependencies
+    pip install --quiet lumigo_tracer lumigo-opentelemetry requests boto3 -t "$PACKAGE_DIR"
+    
+    # Install psycopg2-binary for AMD64 platform (Lambda runtime)
+    print_status "Installing psycopg2-binary for AMD64 platform..."
+    pip install --quiet --platform manylinux2014_x86_64 --only-binary=:all: --target "$PACKAGE_DIR" psycopg2-binary==2.9.9
     
     # Deactivate virtual environment
     deactivate
@@ -243,12 +255,14 @@ deploy_lambda() {
                     --handler $HANDLER \
                     --timeout $TIMEOUT \
                     --memory-size $MEMORY_SIZE \
+                    --layers arn:aws:lambda:$REGION:114300393969:layer:lumigo-log-collector-amd64:27 \
                     --environment Variables="{
                         OTEL_SERVICE_NAME=$FUNCTION_NAME,
                         LUMIGO_TRACER_TOKEN=$LUMIGO_TOKEN,
                         LUMIGO_ENABLE_LOGS=true,
                         DYNAMODB_TABLE_NAME=example-table,
-                        S3_BUCKET_NAME=example-bucket
+                        S3_BUCKET_NAME=example-bucket,
+                        LUMIGO_LOG_ENDPOINT=https://logs-ga.lumigo-tracer-edge.golumigo.com/api/logs?token=$LUMIGO_TOKEN
                     }" \
                     --region $REGION
                 
@@ -282,12 +296,14 @@ deploy_lambda() {
             --zip-file fileb://lambda-package.zip \
             --timeout $TIMEOUT \
             --memory-size $MEMORY_SIZE \
+            --layers arn:aws:lambda:$REGION:114300393969:layer:lumigo-log-collector-amd64:27 \
             --environment Variables="{
                 OTEL_SERVICE_NAME=$FUNCTION_NAME,
                 LUMIGO_TRACER_TOKEN=$LUMIGO_TOKEN,
                 LUMIGO_ENABLE_LOGS=true,
                 DYNAMODB_TABLE_NAME=example-table,
-                S3_BUCKET_NAME=example-bucket
+                S3_BUCKET_NAME=example-bucket,
+                LUMIGO_LOG_ENDPOINT=https://logs-ga.lumigo-tracer-edge.golumigo.com/api/logs?token=$LUMIGO_TOKEN
             }" \
             --region $REGION
     fi
@@ -312,24 +328,111 @@ deploy_lambda() {
 test_lambda() {
     print_status "Testing Lambda function..."
     
-    # Create test event
-    cat > test-event.json << EOF
+    echo "Choose a test event:"
+    echo "1. Use default test event (all operations)"
+    echo "2. Use RDS-only test event (RDS operations only)"
+    echo "3. Use simple test event"
+    echo "4. Enter custom JSON event"
+    echo "5. Skip testing"
+    read -p "Choose an option (1-5): " test_choice
+    
+    case $test_choice in
+        1)
+            # Create default test event
+            cat > events/test-event.json << EOF
 {
   "data": "hello world from lumigo",
   "test": true,
   "timestamp": "2024-01-01T00:00:00Z",
   "user_id": "user123",
   "request_type": "api_call",
+  "source": "direct-deploy-script",
+  "actions": {
+    "api_operations": true,
+    "s3_operations": true,
+    "database_operations": true,
+    "rds_operations": true
+  }
+}
+EOF
+            print_status "Using default test event (all operations)..."
+            ;;
+        2)
+            # Create RDS-only test event
+            cat > events/test-event-rds-only.json << EOF
+{
+  "data": "hello world from lumigo",
+  "test": true,
+  "timestamp": "2024-01-01T00:00:00Z",
+  "user_id": "user123",
+  "request_type": "rds_test",
+  "source": "direct-deploy-script",
+  "actions": {
+    "api_operations": false,
+    "s3_operations": false,
+    "database_operations": false,
+    "rds_operations": true
+  }
+}
+EOF
+            print_status "Using RDS-only test event..."
+            ;;
+        3)
+            # Create simple test event
+            cat > events/test-event-simple.json << EOF
+{
+  "data": "hello from simple test",
+  "test": true,
   "source": "direct-deploy-script"
 }
 EOF
+            print_status "Using simple test event..."
+            ;;
+        4)
+            echo "Enter your custom JSON event (press Enter when done):"
+            echo "Example: {\"data\": \"hello\", \"test\": true, \"actions\": {\"rds_operations\": true}}"
+            read -p "JSON event: " CUSTOM_EVENT
+            if [ ! -z "$CUSTOM_EVENT" ]; then
+                echo "$CUSTOM_EVENT" > events/test-event-custom.json
+                print_status "Using custom test event..."
+            else
+                print_warning "No event provided, skipping test"
+                return
+            fi
+            ;;
+        5)
+            print_warning "Skipping test"
+            return
+            ;;
+        *)
+            print_error "Invalid option"
+            return
+            ;;
+    esac
     
     # Invoke function
     print_status "Invoking Lambda function..."
+    
+    # Determine which test event to use based on the choice
+    case $test_choice in
+        1)
+            TEST_EVENT_FILE="events/test-event.json"
+            ;;
+        2)
+            TEST_EVENT_FILE="events/test-event-rds-only.json"
+            ;;
+        3)
+            TEST_EVENT_FILE="events/test-event-simple.json"
+            ;;
+        4)
+            TEST_EVENT_FILE="events/test-event-custom.json"
+            ;;
+    esac
+    
     aws lambda invoke \
         --function-name $FUNCTION_NAME \
         --cli-binary-format raw-in-base64-out \
-        --payload file://test-event.json \
+        --payload file://$TEST_EVENT_FILE \
         --region $REGION \
         response.json
     

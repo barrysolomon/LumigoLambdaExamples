@@ -1,0 +1,14 @@
+{
+  "data": "hello world from lumigo",
+  "test": true,
+  "timestamp": "2024-01-01T00:00:00Z",
+  "user_id": "user123",
+  "request_type": "rds_test",
+  "source": "direct-deploy-script",
+  "actions": {
+    "api_operations": false,
+    "s3_operations": false,
+    "database_operations": false,
+    "rds_operations": true
+  }
+}

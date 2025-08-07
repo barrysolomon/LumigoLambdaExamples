@@ -19,8 +19,8 @@ ECR_REPOSITORY="lambda-python-lumigo"
 IMAGE_TAG="latest"
 ROLE_NAME="lambda-execution-role"
 
-# Get AWS account ID
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+# Initialize AWS account ID (will be set properly later)
+AWS_ACCOUNT_ID=""
 
 echo -e "${BLUE}🚀 Turnkey Lambda Deployment with Lumigo${NC}"
 echo "================================================"
@@ -169,48 +169,40 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check AWS credentials and refresh if needed
-    if ! aws sts get-caller-identity > /dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  AWS credentials not available or expired.${NC}"
-        echo "Attempting to refresh AWS SSO credentials..."
-        
-        if aws sso login > /dev/null 2>&1; then
-            echo -e "${GREEN}✅ AWS SSO credentials refreshed successfully${NC}"
-        else
-            echo -e "${RED}❌ Failed to refresh AWS credentials.${NC}"
-            echo "Please run 'aws sso login' manually or configure AWS credentials."
-            exit 1
-        fi
-    fi
-    
-    # Additional check for SSO token expiration during operations
-    check_aws_credentials() {
-        if ! aws sts get-caller-identity > /dev/null 2>&1; then
-            echo -e "${YELLOW}⚠️  AWS SSO token expired during operation.${NC}"
-            read -p "Would you like to refresh AWS credentials now? (y/N): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                if aws sso login > /dev/null 2>&1; then
-                    echo -e "${GREEN}✅ AWS SSO credentials refreshed successfully${NC}"
-                    return 0
-                else
-                    echo -e "${RED}❌ Failed to refresh AWS credentials.${NC}"
-                    return 1
-                fi
-            else
-                echo -e "${RED}❌ Cannot continue without valid AWS credentials.${NC}"
-                return 1
-            fi
-        fi
-        return 0
-    }
+    # Check and refresh AWS credentials
+    refresh_aws_credentials
     
     echo -e "${GREEN}✅ All prerequisites met${NC}"
 }
 
+# Function to refresh AWS credentials
+refresh_aws_credentials() {
+    echo -e "${BLUE}🔄 Checking AWS credentials...${NC}"
+    
+    # Try to get caller identity to test credentials
+    if ! aws sts get-caller-identity --query Account --output text > /dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️  AWS credentials appear to be expired or invalid${NC}"
+        
+        # Try AWS SSO login directly
+        echo -e "${BLUE}🔄 Attempting AWS SSO login...${NC}"
+        if aws sso login; then
+            echo -e "${GREEN}✅ AWS SSO credentials refreshed successfully${NC}"
+        else
+            echo -e "${RED}❌ Failed to refresh AWS SSO credentials${NC}"
+            echo "Please run 'aws sso login' manually and try again"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}✅ AWS credentials are valid${NC}"
+    fi
+}
+
 # Function to get AWS account ID
 get_aws_account_id() {
-    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    # First refresh credentials if needed
+    refresh_aws_credentials
+    
+    export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
     echo -e "${GREEN}✅ AWS Account ID: $AWS_ACCOUNT_ID${NC}"
 }
 
@@ -291,8 +283,9 @@ EOF
     # Attach policies
     echo "Attaching policies..."
     aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-            aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+    aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
     aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+    aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonRDSFullAccess
     
     echo -e "${GREEN}✅ IAM role configured${NC}"
 }
@@ -314,14 +307,13 @@ build_and_push() {
     rm -rf .venv-build
     
     echo -e "${BLUE}🔐 Logging into ECR...${NC}"
-    check_aws_credentials || return 1
-    aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+    aws_operation_with_retry aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
     
     # Create ECR repository if it doesn't exist
     echo -e "${BLUE}🏗️  Checking ECR repository...${NC}"
-    if ! aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $REGION > /dev/null 2>&1; then
+    if ! aws_operation_with_retry aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $REGION > /dev/null 2>&1; then
         echo "Creating ECR repository: $ECR_REPOSITORY"
-        aws ecr create-repository --repository-name $ECR_REPOSITORY --region $REGION
+        aws_operation_with_retry aws ecr create-repository --repository-name $ECR_REPOSITORY --region $REGION
         echo -e "${GREEN}✅ ECR repository created${NC}"
     else
         echo -e "${YELLOW}⚠️  ECR repository already exists${NC}"
@@ -340,16 +332,21 @@ build_and_push() {
 deploy_lambda() {
     echo -e "${BLUE}🚀 Deploying Lambda function...${NC}"
     
+    # Get AWS account ID if not already set
+    if [ -z "$AWS_ACCOUNT_ID" ]; then
+        get_aws_account_id
+    fi
+    
     # Build and push the Docker image first
     build_and_push
     
     # Get role ARN dynamically
-    ROLE_ARN=$(aws iam get-role --role-name $ROLE_NAME --query 'Role.Arn' --output text)
+    ROLE_ARN=$(aws_operation_with_retry aws iam get-role --role-name $ROLE_NAME --query 'Role.Arn' --output text)
     
     IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest"
     
     # Check if function exists
-    if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION &> /dev/null; then
+    if aws_operation_with_retry aws lambda get-function --function-name $FUNCTION_NAME --region $REGION &> /dev/null; then
         echo -e "${YELLOW}⚠️  Lambda function '$FUNCTION_NAME' already exists.${NC}"
         echo "What would you like to do?"
         echo "1. Update existing function (redeploy)"
@@ -360,7 +357,7 @@ deploy_lambda() {
         case $choice in
             1)
                 echo -e "${BLUE}Updating existing Lambda function...${NC}"
-                aws lambda update-function-code \
+                aws_operation_with_retry aws lambda update-function-code \
                     --function-name $FUNCTION_NAME \
                     --image-uri $IMAGE_URI \
                     --region $REGION
@@ -368,8 +365,8 @@ deploy_lambda() {
                 # Wait for function to be ready after code update
                 echo -e "${BLUE}Waiting for Lambda function to be ready after code update...${NC}"
                 while true; do
-                    STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.State' --output text)
-                    UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
+                    STATUS=$(aws_operation_with_retry aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.State' --output text)
+                    UPDATE_STATUS=$(aws_operation_with_retry aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
                     
                     if [[ "$STATUS" == "Active" && "$UPDATE_STATUS" == "Successful" ]]; then
                         echo -e "${GREEN}✅ Function is ready after code update${NC}"
@@ -384,7 +381,7 @@ deploy_lambda() {
                 done
                 
                 echo -e "${BLUE}Updating function configuration...${NC}"
-                aws lambda update-function-configuration \
+                aws_operation_with_retry aws lambda update-function-configuration \
                     --function-name $FUNCTION_NAME \
                     --timeout 60 \
                     --memory-size 512 \
@@ -400,8 +397,8 @@ deploy_lambda() {
                 # Wait for function to be ready after configuration update
                 echo -e "${BLUE}Waiting for Lambda function to be ready after configuration update...${NC}"
                 while true; do
-                    STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.State' --output text)
-                    UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
+                    STATUS=$(aws_operation_with_retry aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.State' --output text)
+                    UPDATE_STATUS=$(aws_operation_with_retry aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
                     
                     if [[ "$STATUS" == "Active" && "$UPDATE_STATUS" == "Successful" ]]; then
                         echo -e "${GREEN}✅ Function is ready after configuration update${NC}"
@@ -432,7 +429,7 @@ deploy_lambda() {
         esac
     else
         echo -e "${BLUE}Creating new Lambda function...${NC}"
-        aws lambda create-function \
+        aws_operation_with_retry aws lambda create-function \
             --function-name $FUNCTION_NAME \
             --package-type Image \
             --code ImageUri=$IMAGE_URI \
@@ -447,30 +444,13 @@ deploy_lambda() {
                 S3_BUCKET_NAME=example-bucket
             }" \
             --region $REGION
+        
+        echo -e "${GREEN}✅ Lambda function created successfully${NC}"
     fi
     
-    # Wait for function to be active
     echo -e "${BLUE}Waiting for function to be active...${NC}"
-    aws lambda wait function-active --function-name $FUNCTION_NAME --region $REGION
-    
+    aws_operation_with_retry aws lambda wait function-active --function-name $FUNCTION_NAME --region $REGION
     echo -e "${GREEN}✅ Lambda function deployed successfully${NC}"
-    
-    # Ask if user wants to test
-    read -p "Would you like to test the function? (y/n): " test_choice
-    if [[ $test_choice =~ ^[Yy]$ ]]; then
-        test_function_interactive
-    fi
-    
-    echo ""
-    echo -e "${BLUE}📋 Summary:${NC}"
-    echo "Function Name: $FUNCTION_NAME"
-    echo "Region: $REGION"
-    echo "Image: $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPOSITORY:latest"
-    echo ""
-    echo -e "${BLUE}🔗 Next steps:${NC}"
-    echo "1. View function in AWS Lambda console"
-    echo "2. Monitor traces in Lumigo dashboard"
-    echo "3. Check CloudWatch logs for execution details"
 }
 
 # Function to test the function
@@ -501,24 +481,25 @@ test_function() {
 test_function_interactive() {
     echo -e "${BLUE}🧪 Interactive Lambda Testing${NC}"
     echo "Choose a test event:"
-    echo "1. Use default test event (from test-event.json)"
-    echo "2. Use simple test event"
-    echo "3. Enter custom JSON event"
-    echo "4. Skip testing"
-    read -p "Choose an option (1-4): " -n 1 -r
+    echo "1. Use default test event (from events/test-event.json) - All operations"
+    echo "2. Use RDS-only test event (from events/test-event-rds-only.json) - RDS operations only"
+    echo "3. Use simple test event"
+    echo "4. Enter custom JSON event"
+    echo "5. Skip testing"
+    read -p "Choose an option (1-5): " -n 1 -r
     echo
     
     case $REPLY in
         1)
-            if [ -f "test-event.json" ]; then
-                echo "Using test-event.json..."
+            if [ -f "events/test-event.json" ]; then
+                echo "Using events/test-event.json (all operations)..."
                 aws lambda invoke \
                     --function-name $FUNCTION_NAME \
-                    --payload file://test-event.json \
+                    --payload file://events/test-event.json \
                     --cli-binary-format raw-in-base64-out \
                     response.json
             else
-                echo -e "${YELLOW}⚠️  test-event.json not found, using simple test event${NC}"
+                echo -e "${YELLOW}⚠️  events/test-event.json not found, using simple test event${NC}"
                 aws lambda invoke \
                     --function-name $FUNCTION_NAME \
                     --payload '{"data": "hello from default test", "test": true}' \
@@ -527,6 +508,23 @@ test_function_interactive() {
             fi
             ;;
         2)
+            if [ -f "events/test-event-rds-only.json" ]; then
+                echo "Using events/test-event-rds-only.json (RDS operations only)..."
+                aws lambda invoke \
+                    --function-name $FUNCTION_NAME \
+                    --payload file://events/test-event-rds-only.json \
+                    --cli-binary-format raw-in-base64-out \
+                    response.json
+            else
+                echo -e "${YELLOW}⚠️  events/test-event-rds-only.json not found, using RDS-only payload${NC}"
+                aws lambda invoke \
+                    --function-name $FUNCTION_NAME \
+                    --payload '{"data": "hello from rds test", "test": true, "actions": {"api_operations": false, "s3_operations": false, "database_operations": false, "rds_operations": true}}' \
+                    --cli-binary-format raw-in-base64-out \
+                    response.json
+            fi
+            ;;
+        3)
             echo "Using simple test event..."
             aws lambda invoke \
                 --function-name $FUNCTION_NAME \
@@ -534,9 +532,9 @@ test_function_interactive() {
                 --cli-binary-format raw-in-base64-out \
                 response.json
             ;;
-        3)
+        4)
             echo "Enter your custom JSON event (press Enter when done):"
-            echo "Example: {\"data\": \"hello\", \"test\": true}"
+            echo "Example: {\"data\": \"hello\", \"test\": true, \"actions\": {\"rds_operations\": true}}"
             read -p "JSON event: " CUSTOM_EVENT
             if [ ! -z "$CUSTOM_EVENT" ]; then
                 aws lambda invoke \
@@ -549,7 +547,7 @@ test_function_interactive() {
                 return
             fi
             ;;
-        4)
+        5)
             echo -e "${YELLOW}⚠️  Skipping test${NC}"
             return
             ;;
@@ -572,6 +570,73 @@ test_function_interactive() {
     echo "2. View recent logs: aws logs tail /aws/lambda/$FUNCTION_NAME --follow"
     if [ ! -z "$LUMIGO_TOKEN" ]; then
         echo "3. Monitor traces in Lumigo dashboard"
+    fi
+}
+
+# Function to handle AWS operations with automatic credential refresh
+aws_operation_with_retry() {
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        if "$@"; then
+            return 0
+        else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                echo -e "${YELLOW}⚠️  AWS operation failed, attempting to refresh credentials...${NC}"
+                if refresh_aws_credentials; then
+                    echo -e "${BLUE}🔄 Retrying AWS operation...${NC}"
+                    continue
+                else
+                    echo -e "${RED}❌ Failed to refresh credentials, cannot retry${NC}"
+                    return 1
+                fi
+            else
+                echo -e "${RED}❌ AWS operation failed after $max_retries attempts${NC}"
+                return 1
+            fi
+        fi
+    done
+}
+
+# Function to check AWS SSO configuration
+check_aws_sso_config() {
+    echo -e "${BLUE}🔍 Checking AWS SSO configuration...${NC}"
+    
+    # Check if AWS CLI is configured for SSO
+    if aws configure list --profile default 2>/dev/null | grep -q "sso"; then
+        echo -e "${GREEN}✅ AWS SSO is configured${NC}"
+        return 0
+    else
+        echo -e "${YELLOW}⚠️  AWS SSO is not configured${NC}"
+        echo ""
+        echo -e "${BLUE}📋 AWS SSO Setup Instructions:${NC}"
+        echo "1. Run: aws configure sso"
+        echo "2. Enter your SSO start URL (e.g., https://your-sso-portal.awsapps.com/start)"
+        echo "3. Enter your SSO region (e.g., us-east-1)"
+        echo "4. Choose your account and role"
+        echo "5. Run: aws sso login"
+        echo ""
+        echo -e "${YELLOW}💡 Or use traditional IAM credentials:${NC}"
+        echo "Run: aws configure"
+        echo ""
+        read -p "Would you like to configure AWS SSO now? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${BLUE}🔄 Starting AWS SSO configuration...${NC}"
+            aws configure sso
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}✅ AWS SSO configured successfully${NC}"
+                return 0
+            else
+                echo -e "${RED}❌ AWS SSO configuration failed${NC}"
+                return 1
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Please configure AWS credentials manually and try again${NC}"
+            return 1
+        fi
     fi
 }
 

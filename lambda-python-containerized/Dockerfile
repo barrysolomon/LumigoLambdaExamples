@@ -10,6 +10,7 @@ COPY lambda_function.py /var/task/
 COPY dynamodb_api.py /var/task/
 COPY s3_api.py /var/task/
 COPY api_calls.py /var/task/
+COPY postgresql_api.py /var/task/
 
 # Set default environment variables for turnkey deployment
 ENV LUMIGO_TRACER_TOKEN=""

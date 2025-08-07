@@ -1,136 +1,314 @@
-# Lambda Python Containerized with Lumigo OpenTelemetry
+# Lambda Python Containerized with Lumigo
 
-A containerized Python Lambda function demonstrating AWS service integration with Lumigo OpenTelemetry tracing, structured JSON logging, and execution tags.
+A comprehensive example of a containerized Python Lambda function instrumented with Lumigo OpenTelemetry Distribution, demonstrating how to wrap existing AWS service calls with proper instrumentation.
+
+## 🚀 Features
+
+- **Containerized Lambda Deployment**: Uses Docker containers for consistent deployment
+- **Lumigo Instrumentation**: Full OpenTelemetry integration with execution tags and programmatic errors
+- **Multi-Service Operations**: Demonstrates instrumentation for:
+  - **DynamoDB**: CRUD operations with table lifecycle management
+  - **S3**: Bucket lifecycle operations (create, upload, list, delete)
+  - **HTTP APIs**: External API calls with round-robin endpoint selection
+  - **RDS PostgreSQL**: Database operations with user management
+- **Structured Logging**: JSON-formatted logs for all operations
+- **Error Handling**: Comprehensive error tracking and programmatic error reporting
+- **Round-Robin Load Distribution**: Distributes operations across multiple resources
+
+## 📋 Prerequisites
+
+- AWS CLI configured with appropriate permissions
+- Docker installed and running
+- Python 3.11+
+- AWS SSO (optional, for credential management)
+- Lumigo account with tracer token
+
+## 🔐 Lumigo Configuration
+
+### Token Management
+
+The deployment scripts support storing your Lumigo tracer token for convenience:
+
+```bash
+# Create .lumigo_token file with your token
+echo "your_lumigo_tracer_token_here" > .lumigo_token
+
+# The deployment scripts will automatically use this token
+./deploy-containerized.sh
+```
+
+**Note**: The `.lumigo_token` file is already in `.gitignore` to prevent accidentally committing your token to version control.
+
+## 🏗️ Architecture
+
+### Core Components
+
+- **`lambda_function.py`**: Main Lambda handler with orchestration logic
+- **`dynamodb_api.py`**: DynamoDB Data Access Layer (DAL)
+- **`s3_api.py`**: S3 Data Access Layer (DAL)
+- **`api_calls.py`**: HTTP API Data Access Layer (DAL)
+- **`postgresql_api.py`**: RDS PostgreSQL Data Access Layer (DAL)
+- **`deploy-containerized.sh`**: Containerized deployment script
+- **`deploy-direct.sh`**: Direct ZIP deployment script
+- **`create-rds.sh`**: RDS PostgreSQL database creation script
+- **`delete-rds.sh`**: RDS PostgreSQL database cleanup script
+- **`check-rds-connectivity.sh`**: RDS connectivity troubleshooting script
+- **`events/`**: Test event files for Lambda testing
+
+### Database Support
+
+#### DynamoDB
+- Automatic table creation if not exists
+- Full CRUD operations (Create, Read, Update, Delete)
+- Round-robin across 3 tables
+- Persistent tables (not automatically deleted)
+
+#### RDS PostgreSQL
+- Automatic database setup with `create-rds.sh`
+- User management operations (Create, Read, Update, Delete)
+- Connection pooling and error handling
+- Environment-based configuration
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- AWS CLI configured
-- Docker installed
-- Lumigo account with tracer token
+### 1. Clone and Setup
 
-### Deploy
 ```bash
-# Set your Lumigo token
-echo "your_lumigo_token_here" > .lumigo_token
+git clone <repository-url>
+cd lambda-python-containerized
+```
 
-# Deploy containerized Lambda
+### 2. Create RDS PostgreSQL Database (Optional)
+
+```bash
+# Make the script executable
+chmod +x create-rds.sh
+
+# Create RDS PostgreSQL instance
+./create-rds.sh
+```
+
+This will create:
+- RDS PostgreSQL instance (`db.t3.micro`)
+- Security group with PostgreSQL access
+- Database subnet group
+- Database: `lumigo_test`
+- Username: `lumigo_admin`
+- Password: `LumigoTest123!`
+
+#### Cleanup RDS Resources
+
+When you're done testing, clean up the RDS resources:
+
+```bash
+# Make the cleanup script executable
+chmod +x delete-rds.sh
+
+# Delete RDS PostgreSQL instance and associated resources
+./delete-rds.sh
+```
+
+This will remove:
+- RDS PostgreSQL instance
+- Security group
+- Database subnet group
+
+### 3. Troubleshoot RDS Connectivity (If Needed)
+
+If you encounter RDS connection timeouts:
+
+```bash
+# Check RDS connectivity and get troubleshooting guidance
+./check-rds-connectivity.sh
+```
+
+Common issues and solutions:
+- **Lambda not in VPC**: Configure Lambda with VPC settings
+- **RDS in private subnet**: Move to public subnet for testing, or use RDS Proxy
+- **Security group rules**: Ensure Lambda can access RDS port 5432
+
+### 4. Test Events
+
+The project includes several test events in the `events/` folder:
+
+- **`events/test-event.json`**: All operations enabled (API, S3, DynamoDB, RDS)
+- **`events/test-event-rds-only.json`**: RDS operations only
+- **`events/local-test.json`**: Simple test for local development
+
+You can also create custom test events with specific `actions` configurations:
+
+```json
+{
+  "data": "hello world",
+  "test": true,
+  "actions": {
+    "api_operations": true,
+    "s3_operations": false,
+    "database_operations": true,
+    "rds_operations": false
+  }
+}
+```
+
+### 5. Deploy Lambda Function
+
+#### Containerized Deployment (Recommended)
+
+```bash
 ./deploy-containerized.sh
+```
 
-# Or deploy as ZIP package
+#### Direct ZIP Deployment
+
+```bash
 ./deploy-direct.sh
 ```
 
-## 📊 Features
+### 4. Test the Function
 
-### **AWS Service Integration**
-- **DynamoDB**: CRUD operations with table lifecycle management
-- **S3**: Bucket lifecycle (upload, list, delete objects)
-- **HTTP APIs**: External API calls with round-robin endpoints
+The deployment script includes interactive testing options:
+- Use default test event
+- Use simple test event
+- Enter custom JSON event
 
-### **Lumigo Instrumentation**
-- **OpenTelemetry Distribution**: `lumigo-opentelemetry`
-- **Execution Tags**: Automatic tagging of resources
-- **Structured JSON Logging**: Rich, parseable logs
-- **Programmatic Errors**: Error categorization
+## 📊 Monitoring and Tracing
 
-### **Deployment Options**
-- **Containerized**: Docker-based with ECR
-- **Direct ZIP**: Traditional Lambda package
+### Lumigo Dashboard
+
+All operations are traced with:
+- **Execution Tags**: Resource names (tables, buckets, endpoints)
+- **Programmatic Errors**: Detailed error tracking
+- **Structured Logs**: JSON-formatted operation logs
+
+### CloudWatch Logs
+
+```bash
+# View recent logs
+aws logs tail /aws/lambda/lambda-python-lumigo-container --follow
+
+# Check log groups
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/lambda-python-lumigo-container
+```
 
 ## 🔧 Configuration
 
 ### Environment Variables
+
+The Lambda function uses these environment variables:
+
 ```bash
-LUMIGO_TRACER_TOKEN=your_token
 OTEL_SERVICE_NAME=lambda-python-lumigo-container
+LUMIGO_TRACER_TOKEN=your_lumigo_token
 LUMIGO_ENABLE_LOGS=true
 DYNAMODB_TABLE_NAME=example-table
 S3_BUCKET_NAME=example-bucket
+RDS_HOST=your_rds_endpoint
+RDS_DATABASE_NAME=lumigo_test
+RDS_USERNAME=lumigo_admin
+RDS_PASSWORD=LumigoTest123!
 ```
 
 ### IAM Permissions
-- CloudWatch Logs
-- DynamoDB full access
-- S3 full access
 
-## 📈 Monitoring
+The Lambda execution role includes:
+- `AWSLambdaBasicExecutionRole`: CloudWatch Logs
+- `AmazonS3FullAccess`: S3 operations
+- `AmazonDynamoDBFullAccess`: DynamoDB operations
+- `AmazonRDSFullAccess`: RDS operations
 
-### **Lumigo Dashboard**
-- Complete request traces
-- Execution tag filtering
-- Error categorization
-- Performance metrics
+## 📝 API Operations
 
-### **CloudWatch Logs**
-- Structured JSON logs
-- Service operation details
-- Error context
+### DynamoDB Operations
 
-## 🧪 Testing
-
-### Test Events
-```json
-{
-  "data": "hello world from lumigo",
-  "test": true,
-  "user_id": "user123"
-}
+```python
+# Example: Wrap existing DynamoDB operations
+dal = DynamoDBDAL(table_name)
+dal.ensure_table_exists()
+dal.create_item(item_data)
+dal.read_item(item_id)
+dal.update_item(item_id, updates)
+dal.delete_item(item_id)
 ```
 
-### Round-Robin Testing
-- **DynamoDB**: 3 different tables
-- **S3**: 3 different buckets  
-- **API**: 3 different endpoints
+### S3 Operations
 
-## 📁 Project Structure
-```
-├── lambda_function.py      # Main handler with orchestration
-├── dynamodb_api.py        # DynamoDB Data Access Layer
-├── s3_api.py             # S3 Data Access Layer
-├── api_calls.py          # HTTP API Data Access Layer
-├── deploy-containerized.sh # Containerized deployment
-├── deploy-direct.sh      # Direct ZIP deployment
-└── test-event.json      # Sample test event
+```python
+# Example: Wrap existing S3 operations
+dal = S3DAL()
+dal.ensure_bucket_exists()
+dal.upload_sample_objects()
+dal.list_bucket_objects()
+dal.delete_bucket_objects()
 ```
 
-## 🚨 Troubleshooting
+### HTTP API Operations
+
+```python
+# Example: Wrap existing API calls
+dal = APIDAL()
+response = dal.fetch_data(endpoint)
+```
+
+### RDS PostgreSQL Operations
+
+```python
+# Example: Wrap existing PostgreSQL operations
+dal = PostgreSQLDAL()
+dal.ensure_table_exists()
+dal.create_user(user_data)
+dal.read_user(user_id)
+dal.update_user(user_id, updates)
+dal.delete_user(user_id)
+```
+
+## 🔍 Troubleshooting
 
 ### Common Issues
-- **DynamoDB Parameter Errors**: Check item format
-- **S3 Access Denied**: Verify IAM permissions
-- **Container Build Failures**: Ensure Docker is running
-- **Lambda Timeout**: Increase timeout (currently 60s)
 
-### Debug Commands
+1. **RDS Connection Issues**
+   - Ensure RDS instance is in "available" status
+   - Check security group allows Lambda access
+   - Verify environment variables are set
+
+2. **DynamoDB Parameter Validation Errors**
+   - The function includes error handling for DynamoDB parameter issues
+   - Check CloudWatch logs for detailed error information
+
+3. **S3 Permission Errors**
+   - Ensure IAM role has S3 permissions
+   - Check bucket names and permissions
+
+### Local Testing
+
 ```bash
-# View logs
-aws logs tail /aws/lambda/lambda-python-lumigo-container --follow
+# Test with local AWS services
+./test-local-aws.sh
 
-# Test function
-aws lambda invoke --function-name lambda-python-lumigo-container --payload file://test-event.json response.json
+# Test without AWS services
+python lambda_function.py
 ```
 
-## 📚 API Reference
+## 📈 Performance
 
-### Execution Tags
-```python
-add_execution_tag("database", "DynamoDB")
-add_execution_tag("database_table", "example-table")
-add_execution_tag("s3_bucket", "example-bucket")
-add_execution_tag("api_url", "https://api.example.com")
-```
+- **Timeout**: 60 seconds (configurable)
+- **Memory**: 512MB (configurable)
+- **Architecture**: x86_64
+- **Runtime**: Python 3.11
 
-### Programmatic Errors
-```python
-add_programmatic_error("SERVICE_ERROR", "Error message")
-```
+## 🔒 Security
 
-## 🔗 Resources
-- [Lumigo Documentation](https://docs.lumigo.io)
-- [AWS Lambda Documentation](https://docs.aws.amazon.com/lambda)
-- [OpenTelemetry Python](https://opentelemetry.io/docs/languages/python)
+- **Encryption**: RDS storage encryption enabled
+- **Network**: RDS in private subnets
+- **IAM**: Least privilege access
+- **Secrets**: Environment variables for sensitive data
 
----
+## 📚 Additional Resources
 
-**Note**: This is a demonstration project showing best practices for instrumenting Python Lambda functions with Lumigo OpenTelemetry. 
+- [Lumigo Documentation](https://docs.lumigo.io/)
+- [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
+- [OpenTelemetry Python](https://opentelemetry.io/docs/languages/python/)
+- [AWS RDS PostgreSQL](https://docs.aws.amazon.com/rds/latest/userguide/CHAP_PostgreSQL.html)
+
+## 🤝 Contributing
+
+This is an example project demonstrating Lumigo instrumentation patterns. Feel free to adapt and extend for your specific use cases. 

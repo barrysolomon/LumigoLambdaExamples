@@ -1,3 +1,5 @@
+lumigo_tracer
 lumigo-opentelemetry
 requests
-boto3 
+boto3
+psycopg2-binary==2.9.9 

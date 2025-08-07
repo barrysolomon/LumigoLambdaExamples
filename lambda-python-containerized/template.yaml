@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template for local Lambda testing
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Environment:
+      Variables:
+        OTEL_SERVICE_NAME: lambda-python-lumigo-local
+        LUMIGO_TRACER_TOKEN: t_f8f7b905da964eef89261
+        LUMIGO_ENABLE_LOGS: "true"
+        DYNAMODB_TABLE_NAME: example-table
+        S3_BUCKET_NAME: example-bucket
+
+Resources:
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.9
+      Policies:
+        - DynamoDBFullAccess:
+            TableName: example-table
+        - S3FullAccess:
+            BucketName: example-bucket 

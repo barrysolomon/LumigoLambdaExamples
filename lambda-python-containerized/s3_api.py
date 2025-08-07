@@ -107,6 +107,25 @@ class S3DAL:
                 
                 return self.create_bucket()
                 
+            except self.s3.exceptions.ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == '403':
+                    logger.warning(f"⚠️  Access denied to bucket {self.bucket_name}, attempting to create new bucket")
+                    return self.create_bucket()
+                else:
+                    logger.info(safe_json_serialize({
+                        "Data_Source": "S3_Operations",
+                        "Data_Target": "Check_Bucket_Error",
+                        "Data_Artifacts": {
+                            "bucket_name": self.bucket_name,
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                            "action": "check_bucket_error",
+                            "aws_service": "S3"
+                        }
+                    }))
+                    return self.create_bucket()
+                    
             except Exception as e:
                 logger.info(safe_json_serialize({
                     "Data_Source": "S3_Operations",
@@ -120,7 +139,7 @@ class S3DAL:
                     }
                 }))
                 
-                return False
+                return self.create_bucket()
                 
         except Exception as e:
             logger.info(safe_json_serialize({
@@ -140,6 +159,7 @@ class S3DAL:
     def create_bucket(self):
         """
         Create an S3 bucket for demonstration purposes.
+        Handles various error cases and tries alternative bucket names if needed.
         """
         logger.info(safe_json_serialize({
             "Data_Source": "S3_Operations",
@@ -151,35 +171,97 @@ class S3DAL:
             }
         }))
         
+        # Get AWS account ID for unique bucket naming
         try:
-            self.s3.create_bucket(Bucket=self.bucket_name)
-            
-            logger.info(safe_json_serialize({
-                "Data_Source": "S3_Operations",
-                "Data_Target": "Create_Bucket_Success",
-                "Data_Artifacts": {
-                    "bucket_name": self.bucket_name,
-                    "action": "create_bucket_success",
-                    "aws_service": "S3"
-                }
-            }))
-            
-            return True
-            
-        except Exception as e:
-            logger.info(safe_json_serialize({
-                "Data_Source": "S3_Operations",
-                "Data_Target": "Create_Bucket_Error",
-                "Data_Artifacts": {
-                    "bucket_name": self.bucket_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "action": "create_bucket_error",
-                    "aws_service": "S3"
-                }
-            }))
-            
-            return False
+            sts_client = boto3.client('sts')
+            account_id = sts_client.get_caller_identity()['Account']
+        except:
+            account_id = "unknown"
+        
+        # Try the original bucket name first
+        bucket_names_to_try = [
+            self.bucket_name,
+            f"{self.bucket_name}-{account_id}",
+            f"{self.bucket_name}-{int(time.time())}",
+            f"{self.bucket_name}-{uuid.uuid4().hex[:8]}",
+            f"lumigo-test-{account_id}-{uuid.uuid4().hex[:8]}"
+        ]
+        
+        for bucket_name in bucket_names_to_try:
+            try:
+                logger.info(f"🪣 Attempting to create bucket: {bucket_name}")
+                
+                # Check if bucket already exists
+                try:
+                    self.s3.head_bucket(Bucket=bucket_name)
+                    logger.info(f"✅ Bucket {bucket_name} already exists")
+                    self.bucket_name = bucket_name
+                    return True
+                except self.s3.exceptions.NoSuchBucket:
+                    pass  # Bucket doesn't exist, proceed to create
+                except self.s3.exceptions.ClientError as e:
+                    if e.response['Error']['Code'] == '404':
+                        pass  # Bucket doesn't exist, proceed to create
+                    else:
+                        raise  # Re-raise other client errors
+                
+                # Create the bucket
+                try:
+                    self.s3.create_bucket(Bucket=bucket_name)
+                    logger.info(f"✅ Successfully created bucket: {bucket_name}")
+                except self.s3.exceptions.BucketAlreadyExists:
+                    logger.info(f"✅ Bucket {bucket_name} already exists (different account)")
+                    self.bucket_name = bucket_name
+                    return True
+                except self.s3.exceptions.BucketAlreadyOwnedByYou:
+                    logger.info(f"✅ Bucket {bucket_name} already owned by you")
+                    self.bucket_name = bucket_name
+                    return True
+                except Exception as e:
+                    logger.warning(f"⚠️  Failed to create bucket {bucket_name}: {str(e)}")
+                    continue
+                
+                logger.info(safe_json_serialize({
+                    "Data_Source": "S3_Operations",
+                    "Data_Target": "Create_Bucket_Success",
+                    "Data_Artifacts": {
+                        "bucket_name": bucket_name,
+                        "action": "create_bucket_success",
+                        "aws_service": "S3"
+                    }
+                }))
+                
+                # Update the bucket name to the successfully created one
+                self.bucket_name = bucket_name
+                return True
+                
+            except self.s3.exceptions.BucketAlreadyExists:
+                logger.warning(f"⚠️  Bucket {bucket_name} already exists (different account)")
+                continue
+                
+            except self.s3.exceptions.BucketAlreadyOwnedByYou:
+                logger.info(f"✅ Bucket {bucket_name} already owned by you")
+                self.bucket_name = bucket_name
+                return True
+                
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to create bucket {bucket_name}: {str(e)}")
+                continue
+        
+        # If we get here, all bucket names failed
+        logger.error(safe_json_serialize({
+            "Data_Source": "S3_Operations",
+            "Data_Target": "Create_Bucket_Error",
+            "Data_Artifacts": {
+                "bucket_name": self.bucket_name,
+                "error": "All bucket name attempts failed",
+                "error_type": "BucketCreationFailed",
+                "action": "create_bucket_error",
+                "aws_service": "S3"
+            }
+        }))
+        
+        return False
     
     def upload_object(self, key, content, content_type='application/json'):
         """
