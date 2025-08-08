@@ -51,10 +51,23 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check if AWS credentials are configured
+    # Check if AWS credentials are configured and handle SSO login if needed
     if ! aws sts get-caller-identity &> /dev/null; then
-        print_error "AWS credentials are not configured. Please run 'aws configure' first."
-        exit 1
+        print_warning "AWS credentials not found or expired. Attempting to refresh SSO credentials..."
+        
+        # Try to run aws sso login automatically
+        if aws sso login &> /dev/null; then
+            print_success "SSO login successful"
+        else
+            print_error "Failed to login with SSO. Please run 'aws sso login' manually."
+            exit 1
+        fi
+        
+        # Verify credentials are now working
+        if ! aws sts get-caller-identity &> /dev/null; then
+            print_error "AWS credentials are still not working after SSO login."
+            exit 1
+        fi
     fi
     
     # Check if Python 3 is available

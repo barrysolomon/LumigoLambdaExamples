@@ -6,3 +6,4 @@ lambda-node-simple/*/package-lock.json
 lambda-node-simple/package-lock.json
 lambda-python-containerized/response.json
 lambda-python-containerized/lambda-package.zip
+lambda-python-containerized/deploy-direct.sh
