@@ -53,6 +53,7 @@ echo "your_lumigo_tracer_token_here" > .lumigo_token
 - **`create-rds.sh`**: RDS PostgreSQL database creation script
 - **`delete-rds.sh`**: RDS PostgreSQL database cleanup script
 - **`check-rds-connectivity.sh`**: RDS connectivity troubleshooting script
+- **`cleanup-all.sh`**: Comprehensive cleanup of all AWS resources
 - **`events/`**: Test event files for Lambda testing
 
 ### Database Support
@@ -112,6 +113,36 @@ This will remove:
 - RDS PostgreSQL instance
 - Security group
 - Database subnet group
+
+#### Comprehensive Cleanup
+
+To selectively remove resources created by this project:
+
+```bash
+# Make the script executable
+chmod +x cleanup-all.sh
+
+# Run interactive cleanup
+./cleanup-all.sh
+```
+
+The script provides an interactive menu to choose what to clean up:
+
+**Available Options:**
+- **Lambda Functions**: `lambda-python-lumigo-direct`, `lambda-python-lumigo-container`
+- **CloudWatch Log Groups**: Function logs
+- **S3 Buckets**: `example-bucket-*`, `lumigo-test-*`
+- **DynamoDB Tables**: `example-table*`
+- **RDS PostgreSQL Instance**: `lumigo-test-postgres`
+- **ECR Repositories**: `lambda-python-lumigo`
+- **IAM Roles and Policies**: Execution roles and attached policies
+- **Clean Everything**: All resources at once
+
+**Features:**
+- Selective cleanup (choose only what you want to delete)
+- Confirmation prompts for each operation
+- Automatic AWS SSO credential refresh
+- Detailed progress reporting
 
 ### 3. Troubleshoot RDS Connectivity (If Needed)
 
