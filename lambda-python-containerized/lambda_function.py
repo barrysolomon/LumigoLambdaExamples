@@ -621,6 +621,7 @@ def perform_rds_operations():
                     "Data_Target": "Insert_Operations",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "action": "insert_operations_start",
                         "service": "RDS_PostgreSQL_API"
                     }
@@ -663,6 +664,7 @@ def perform_rds_operations():
                     "Data_Target": "Insert_Operations_Complete",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "inserts_completed": 3,
                         "user_id": user_id,
                         "product_id": product_id,
@@ -678,6 +680,7 @@ def perform_rds_operations():
                     "Data_Target": "Read_Operations",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "action": "read_operations_start",
                         "service": "RDS_PostgreSQL_API"
                     }
@@ -690,6 +693,7 @@ def perform_rds_operations():
                     "Data_Target": "Read_Operations_Complete",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "user_id": user_id,
                         "user_found": read_user_response.get('user_found', False),
                         "action": "read_operations_complete",
@@ -703,6 +707,7 @@ def perform_rds_operations():
                     "Data_Target": "Update_Operations",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "action": "update_operations_start",
                         "service": "RDS_PostgreSQL_API"
                     }
@@ -731,6 +736,7 @@ def perform_rds_operations():
                     "Data_Target": "Update_Operations_Complete",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "updates_completed": 3,
                         "user_id": user_id,
                         "product_id": product_id,
@@ -746,6 +752,7 @@ def perform_rds_operations():
                     "Data_Target": "Delete_Operations",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "action": "delete_operations_start",
                         "service": "RDS_PostgreSQL_API"
                     }
@@ -765,6 +772,7 @@ def perform_rds_operations():
                     "Data_Target": "Delete_Operations_Complete",
                     "Data_Artifacts": {
                         "database_type": "RDS_PostgreSQL",
+                        "table_name": dal.table_name,
                         "deletes_completed": 3,
                         "user_id": user_id,
                         "product_id": product_id,
